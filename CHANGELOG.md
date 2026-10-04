@@ -2,7 +2,7 @@
 
 ## 0.2.0
 
-Skills now arrive as **instructions**, not as documents.
+Skills now arrive as instructions the model is told to follow.
 
 - The tool result is wrapped in a `<skill name="…" path="…">` tag with an
   explicit directive: apply now, before producing other output, as directives
@@ -15,11 +15,11 @@ Skills now arrive as **instructions**, not as documents.
 - Tool descriptions now say the content is authoritative, matching the wording
   the built-in `skill` tool uses for its blocking directive.
 
-Why: a bare markdown body returned from a tool reads as *reference data*. The
-built-in reminder that fixes this — "Always check if any skills apply… Multiple
-skill files may be needed for a single request" — only renders when
-`chat.useSkillAdherencePrompt` is enabled, and that setting defaults to false.
-Nkana applies the framing unconditionally, so it behaves that way by default.
+Why: a bare markdown body returned from a tool reads as reference data, so the
+model files it away instead of following it. The built-in reminder that fixes
+this, "Always check if any skills apply… Multiple skill files may be needed for
+a single request", only renders when `chat.useSkillAdherencePrompt` is enabled,
+and that setting defaults to false. Nkana applies the framing either way.
 
 ## 0.1.0
 
