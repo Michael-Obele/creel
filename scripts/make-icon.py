@@ -21,7 +21,7 @@ BOT_HALF = 76 * S
 
 
 def half_width(y: float) -> float:
-    """Half-width of the basket at height `y` — the body tapers inward."""
+    """Half-width of the basket at height `y`. The body tapers inward."""
     t = (y - TOP_Y) / (BOT_Y - TOP_Y)
     t = min(max(t, 0.0), 1.0)
     return TOP_HALF + (BOT_HALF - TOP_HALF) * t

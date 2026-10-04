@@ -29,8 +29,10 @@ So: use a PAT now. If the extension is still maintained after December, either m
 | `LICENSE` | MIT, present |
 | `README.md` | Present, and the Marketplace renders it |
 | `CHANGELOG.md` | Present |
-| `.vscodeignore` | Present, excludes `.git`, `install.sh`, `skills.json` and `*.vsix` |
-| `@vscode/vsce` | Not installed yet |
+| `icon.png` | 256x256, declared as `icon` in `package.json`. Regenerate with `python3 scripts/make-icon.py` |
+| `.vscodeignore` | Excludes `.git`, `.fallow`, `install.sh`, `scripts`, `skills.json`, `PUBLISHING.md` and `*.vsix` |
+| Packaging | Verified. `npx @vscode/vsce package` produces a 9-file, 28 KB VSIX |
+| `@vscode/vsce` | Not installed globally, but `npx @vscode/vsce` works and needs no install |
 
 ## Steps
 

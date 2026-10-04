@@ -236,10 +236,47 @@ function readConfiguredFolders() {
   return vscode.workspace.getConfiguration("nkana").get("skillFolders");
 }
 
-module.exports = { RESERVED, scanSkills, buildEntries, apply };
+/**
+ * Clear the tool list, putting the manifest back to its empty-by-design state.
+ * Run before committing so a published package never carries a personal skill
+ * list.
+ * @param {string} extensionDir the extension's own folder
+ * @returns {{count: number}} how many tools were removed
+ */
+function reset(extensionDir) {
+  const manifestPath = path.join(extensionDir, "package.json");
+  const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+  const count = manifest.contributes.languageModelTools?.length ?? 0;
+  manifest.contributes.languageModelTools = [];
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, "\t") + "\n");
+  return { count };
+}
 
-// CLI entry: node generate.js
+module.exports = { RESERVED, scanSkills, buildEntries, apply, reset };
+
+// CLI entry: node generate.js [--reset] [--force]
 if (require.main === module) {
+  const args = process.argv.slice(2);
+
+  if (args.includes("--reset")) {
+    const { count } = reset(__dirname);
+    console.log(`Nkana: cleared the tool list (removed ${count} tools).`);
+    process.exit(0);
+  }
+
+  // The committed manifest must ship an empty tool list, so a published package
+  // never carries someone's personal skills. Writing a list into the repo is
+  // almost always a mistake, so refuse unless --force is passed.
+  if (fs.existsSync(path.join(__dirname, ".git")) && !args.includes("--force")) {
+    console.error(
+      "Nkana: refusing to write a skill list into the repo.\n" +
+        "Run the generator in the installed copy instead:\n" +
+        "  node ~/.vscode/extensions/michael-obele.nkana-0.2.0/generate.js\n" +
+        "Pass --force only if you really mean to commit a skill list.",
+    );
+    process.exit(1);
+  }
+
   const { count, skipped } = apply(__dirname);
   console.log(`Nkana: ${count} skills are now #-referenceable.`);
   for (const line of skipped) {

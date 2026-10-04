@@ -130,12 +130,26 @@ The scanner:
 
 ## Development
 
-```bash
-node generate.js     # rebuild the tool list in place
-node --check extension.js
+The committed `package.json` ships `"languageModelTools": []` on purpose, so no
+personal skill list is ever published. The generator therefore refuses to run
+inside the repo:
+
+```text
+$ node generate.js
+Nkana: refusing to write a skill list into the repo.
+Run the generator in the installed copy instead:
+  node ~/.vscode/extensions/michael-obele.nkana-0.2.0/generate.js
+Pass --force only if you really mean to commit a skill list.
 ```
 
-The committed `package.json` ships `"languageModelTools": []` on purpose, so no personal skill list is ever published.
+Run it in the installed copy, which is what `install.sh` does. Pass `--reset` to
+clear a list that got written by mistake, and `--force` to override the guard.
+
+The icon is drawn from code rather than committed as an opaque binary:
+
+```bash
+python3 scripts/make-icon.py   # needs Pillow; writes icon.png
+```
 
 ## Releasing
 

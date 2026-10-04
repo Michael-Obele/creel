@@ -169,7 +169,7 @@ function activate(context) {
         result = apply(extensionDir);
       } catch (error) {
         vscode.window.showErrorMessage(
-          `Nkana: could not scan skills — ${error.message}`,
+          `Nkana: could not scan skills. ${error.message}`,
         );
         return;
       }

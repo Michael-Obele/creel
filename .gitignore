@@ -1,5 +1,6 @@
 node_modules/
 *.vsix
+.fallow/
 
-# Generated per machine — never commit a personal skill list.
+# Generated per machine. Never commit a personal skill list.
 skills.json

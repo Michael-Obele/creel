@@ -1,7 +1,10 @@
 .git/**
 .github/**
 .vscode/**
+.fallow/**
 .gitignore
 install.sh
 skills.json
+scripts/**
+PUBLISHING.md
 *.vsix
