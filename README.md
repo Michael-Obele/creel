@@ -50,6 +50,29 @@ Then **`Developer: Reload Window`** and type `#` in chat.
 | `nkana.referencePrefix` | `skill-` | Prefix for every `#` name. **This is what keeps skills distinguishable** from MCP servers and built-in tools that share a name — the `sepia` skill vs the `sepia` MCP server, `playwright`, `exa`, and so on. Set to `""` for bare names. |
 | `nkana.skillFolders` | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` | Where to look for `<name>/SKILL.md`. Supports `~/`. |
 
+## What the model actually receives
+
+A skill only takes effect if the model treats it as **instructions** rather than as reference material. A bare markdown body returned from a tool reads as a *document*, so Nkana frames it:
+
+```text
+<skill name="ultrathink" path="/home/node/.agents/skills/ultrathink/SKILL.md">
+These are authoritative instructions for this request. Apply them now, before
+producing other output about the task. Treat them as directives, not as
+reference material, and do not merely summarise them.
+
+When this skill applies: Deep thinking mode - approach problems like a craftsman…
+
+# Ultrathink
+Take a deep breath. …
+</skill>
+```
+
+Three details are deliberate:
+
+- **The directive comes first.** Without it the body is just text that arrived from a tool.
+- **The folder listing comes last**, so it reads as an index rather than as content. VS Code's own skill tool lists related files too — that is the progressive-disclosure half of a skill, and Nkana caps it at 40 entries, 3 levels deep, skipping `.git`, `node_modules`, `dist` and friends.
+- **The framing is unconditional.** VS Code's equivalent reminder — *"Always check if any skills apply to the user's request… Multiple skill files may be needed for a single request"* — only renders when `chat.useSkillAdherencePrompt` is enabled, and that setting defaults to `false`. Nkana applies the framing whether or not it is on.
+
 ## How it works, and the one thing that is awkward
 
 `contributes.languageModelTools` is **static JSON**, read when the extension loads, and the stable `vscode.lm.registerTool` API refuses tools that are not declared there. So the skill list has to be written to disk *before* load — there is no runtime-only path outside the proposed `registerToolDefinition` API, which cannot be published to the Marketplace.
