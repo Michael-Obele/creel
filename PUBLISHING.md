@@ -1,8 +1,10 @@
 # Publishing Creel
 
-Creel is ready to publish. The fastest route needs no developer token at all: build the package on your machine, then upload the file through the Marketplace website. Set up token publishing only when you want repeat releases or CI.
+Creel is live on the Marketplace at `michael-obele.creel`, first published 4 October 2026 at version 0.2.0. The publisher, the listing and the icon are all in place, so a release from here is just: bump, build, upload.
 
-Checked on 4 October 2026: the Marketplace has **0** extensions named `creel`, and the publisher IDs `michael-obele` and `creel` are both still free.
+The fastest route needs no developer token at all: build the package on your machine, then upload the file through the Marketplace website. Set up token publishing only when you want repeat releases or CI.
+
+The **Create the publisher** and **Filling in About you** steps below are kept as the record of what was set up. On a normal release, skip straight to **Build the package**.
 
 ## What you need to get
 
@@ -10,7 +12,7 @@ Checked on 4 October 2026: the Marketplace has **0** extensions named `creel`, a
 | ------------------------- | ------------------------------------------------------------------ | ------------- | ------------------------- |
 | A Microsoft account       | You probably have one. Decide now which account owns the extension | Free          | Everything                |
 | Publisher ID              | You invent it on the Marketplace site: `michael-obele`             | Free          | Everything                |
-| `creel-0.2.0.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading                 |
+| `creel-0.2.1.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading                 |
 | Azure DevOps organization | https://dev.azure.com, if you have never signed in                 | Free, no card | Only for token publishing |
 | Personal access token     | Azure DevOps → Personal access tokens                              | Free          | Only for token publishing |
 
@@ -24,16 +26,59 @@ Four steps, no tokens, nothing to expire.
 
 Go to [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) and sign in with the Microsoft account that should own Creel. That can be personal or work, and it does not need to match your GitHub account.
 
-Select **Create publisher** in the left pane, then fill in:
+Select **Create publisher** in the left pane. The form asks for more than you need — this is every field on it:
 
-| Field    | What to enter                                                     |
-| -------- | ----------------------------------------------------------------- |
-| **ID**   | `michael-obele`                                                   |
-| **Name** | Your name, or `SvelteCore Systems Ltd` if a company should own it |
+| Field                                                                                                              | Required | What to enter                                                                                    |
+| ------------------------------------------------------------------------------------------------------------------ | -------- | ------------------------------------------------------------------------------------------------ |
+| **ID**                                                                                                             | Yes      | `michael-obele` — **must match the `publisher` field in `package.json`, or every publish fails** |
+| **Name**                                                                                                           | Yes      | The display name beside your extensions. `Michael Obele` reads better than `michaelobele`        |
+| **Verified domain**                                                                                                | No       | **Leave empty.** You cannot qualify yet, and it is not needed to publish — see below             |
+| **Description**, **Logo**, **Company website**, **Support**, **LinkedIn**, **Source code repository**, **Twitter** | No       | All optional — paste-ready values in **Filling in About you** below                              |
 
-The **ID** appears in your extension's URL and **cannot be changed later**. It has to match the `publisher` field in `package.json`, which is already `michael-obele`, so don't improvise.
+Then select **Create**. Doing so means you agree to the Visual Studio Marketplace Publisher Agreement.
+
+**Check the ID character by character before you click Create.** The **ID** and the **Name** look almost identical on that form and are easy to swap, and only the **Name** can be changed afterward. The **ID** becomes part of every URL, so `michael-obele.creel` is decided the moment you select Create. A missing hyphen in this field means every publish fails with `vsce cannot find the publisher`, and the fix is to edit `package.json`, `README.md` and your installed folder instead.
 
 Ignore any "personal access token" wording on that page. Creating a publisher in the browser needs only the Microsoft sign-in.
+
+**Filling in About you.** Every field here is optional. This section describes you, the person, not a company. Each link below returned HTTP 200 when checked on 4 October 2026:
+
+| Field                      | Value                                            |
+| -------------------------- | ------------------------------------------------ |
+| **Description**            | One of the three options below                   |
+| **Logo**                   | `icon.png` — 256×256, scales down without a fuss |
+| **Company website**        | `https://svelte-apps.me`                         |
+| **Support**                | `https://github.com/Michael-Obele/creel/issues`  |
+| **Source code repository** | `https://github.com/Michael-Obele/creel`         |
+| **LinkedIn**               | `https://www.linkedin.com/in/michael-obele/`     |
+| **Twitter**                | `https://x.com/Dev_Obele`                        |
+
+The website field is the easy one to get wrong, because three live sites share a domain:
+
+| URL                      | What it is                                                               | Use it here |
+| ------------------------ | ------------------------------------------------------------------------ | ----------- |
+| `svelte-apps.me`         | Your own site. Says "one developer, shipping often", "work with Michael" | Yes         |
+| `systems.svelte-apps.me` | The SvelteCore Systems Ltd company site                                  | No          |
+| `sepia.svelte-apps.me`   | The Sepia product                                                        | No          |
+
+LinkedIn answers `999` to scripted requests. That is its bot block rather than a missing profile, so open it in a browser to satisfy yourself. The form has no Bluesky field, so `https://bsky.app/profile/svelte-apps.me` has nowhere to go.
+
+For **Support**, the issues URL beats an email address: it is public, and the answers help the next person too. The field accepts either.
+
+**Description.** Three options, all first-person and all true. Pick by tone:
+
+| #   | Copy                                                                                                                                                                | Why                                                                                     |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 1   | `Developer tools for AI coding agents. One developer, shipping in the open — Creel for VS Code, and Sepia, a memory server for MCP clients.`                        | Recommended. Says what you do, says who you are, names two products a reader can verify |
+| 2   | `Network engineering background, now building developer tools. Creel brings multi-skill # references to GitHub Copilot chat, and Sepia gives MCP clients a memory.` | Leads with the engineer, if you want the credibility first                              |
+| 3   | `I'm Michael Obele. I build tools that make AI coding agents more useful — Creel for VS Code, and Sepia, a memory server for MCP clients.`                          | Names you outright, which helps because this text gets quoted away from the page        |
+
+Leave out numbers that will age. Your own site says "526 commits across the last 12 months", which is a fine brag there and a liability in a field you will not revisit.
+
+Two decisions here are hard to undo:
+
+- **The publisher `Name` is what users see**, and changing it later revokes a verified badge. For a personal publisher, `Michael Obele` is the honest form, and plenty of prominent extension publishers are individuals rather than brands. The `ID` stays `michael-obele` regardless, because that is what `package.json` publishes under.
+- **The Logo is the publisher's logo, not Creel's.** It sits beside every extension you ever publish, so if you expect more than Creel, a personal mark beats the basket. `icon.png` is fine to start with, and it is a PNG, which is the safe format for a logo upload.
 
 ### 2. Build the package
 
@@ -43,14 +88,14 @@ From the repository root:
 npx --yes @vscode/vsce package
 ```
 
-That writes `creel-0.2.0.vsix` — 9 files, about 28 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
+That writes `creel-0.2.1.vsix` — 9 files, about 28 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
 
 ### 3. Upload it
 
 Back on the [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) page, with your publisher selected:
 
 1. Select **New extension**, then **Visual Studio Code**.
-2. Drag `creel-0.2.0.vsix` onto the page, or browse for it.
+2. Drag `creel-0.2.1.vsix` onto the page, or browse for it.
 3. Confirm the upload.
 
 For a later release, the same page takes a new `.vsix` for the extension you already have, so you never repeat the setup above.
@@ -68,6 +113,22 @@ New listings can take a few minutes. Then confirm a real install works, on a mac
 ```bash
 code --install-extension michael-obele.creel
 ```
+
+## Verified domain: skip it for now
+
+The **Create publisher** form offers to verify a domain, and your publisher's **Details** tab offers it again later. Leave it empty both times. Verification is not required to publish, and the Marketplace will turn you down for the next six months regardless:
+
+> "To become verified, a publisher must have one or more extensions on the VS Marketplace for a minimum of 6 months, and the registration of the domain must also be at least 6 months old."
+
+An eligible domain also has to:
+
+- Let you add a TXT record to its DNS.
+- Not be a subdomain, which rules out anything like `michaelobele.github.io`.
+- Serve over HTTPS and answer an HTTP 200 to a HEAD request.
+
+When Creel has been on the Marketplace for six months, open your publisher's **Details** tab, type the domain under **Verified domain**, select **Save**, then **Verify**, add the TXT record it shows you, and select **Verify** again. Marketplace staff review it within 5 business days, and the badge then appears next to your publisher name.
+
+One trap worth knowing now: **changing your publisher display name later revokes the badge.** Pick the **Name** you want to keep.
 
 ## Run these checks before you upload
 
@@ -141,8 +202,8 @@ Because `package.json` already holds the version you want, this does not create 
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | Public repo                       | https://github.com/Michael-Obele/creel                                                                          |
 | `publisher` field                 | `michael-obele`, already set in `package.json`                                                                  |
-| Publisher ID free?                | Yes. `marketplace.visualstudio.com/publishers/michael-obele` returns 404. `creel` is free as a publisher ID too |
-| Existing extension named `creel`? | No. The Marketplace returns zero matches                                                                        |
+| Publisher ID free?                | No longer free. `michael-obele` owns the live Creel listing, so treat it as permanent                           |
+| Existing extension named `creel`? | Yes. Live at `michael-obele.creel` since 4 October 2026, first version 0.2.0                                    |
 | Open web                          | Clean. Results for "creel" are dictionary and Wikipedia entries for the word, so page one is winnable           |
 | `LICENSE`                         | MIT, present                                                                                                    |
 | `README.md`                       | Present, and the Marketplace renders it                                                                         |

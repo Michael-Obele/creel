@@ -271,7 +271,7 @@ if (require.main === module) {
     console.error(
       "Creel: refusing to write a skill list into the repo.\n" +
         "Run the generator in the installed copy instead:\n" +
-        "  node ~/.vscode/extensions/michael-obele.creel-0.2.0/generate.js\n" +
+        "  node ~/.vscode/extensions/michael-obele.creel-0.2.1/generate.js\n" +
         "Pass --force only if you really mean to commit a skill list.",
     );
     process.exit(1);

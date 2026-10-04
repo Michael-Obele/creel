@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.1
+
+README rewritten as a landing page: centered hero with badges and jump links, a
+problem-first opening, requirements up front, and a tighter prose pass. No
+behaviour change, so the only reason for the release is to get the new listing
+copy onto the Marketplace.
+
 ## 0.2.0
 
 Renamed to **Creel** before the first release. Nothing was published under the old name, and no user-facing reference changes, because the `#` names are `skill-<name>` and never contained the product name. Only internal tool ids and settings keys moved.
