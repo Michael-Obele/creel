@@ -1,0 +1,5 @@
+node_modules/
+*.vsix
+
+# Generated per machine — never commit a personal skill list.
+skills.json

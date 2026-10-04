@@ -1,0 +1,7 @@
+.git/**
+.github/**
+.vscode/**
+.gitignore
+install.sh
+skills.json
+*.vsix

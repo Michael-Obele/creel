@@ -1,0 +1,66 @@
+{
+	"name": "nkana",
+	"displayName": "Nkana — attach skills with #",
+	"description": "Expose your agent skills as #-referenceable tools, so any number of them can be attached to one chat message, anywhere in the message.",
+	"version": "0.2.0",
+	"publisher": "michael-obele",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Michael-Obele/nkana.git"
+	},
+	"bugs": {
+		"url": "https://github.com/Michael-Obele/nkana/issues"
+	},
+	"homepage": "https://github.com/Michael-Obele/nkana#readme",
+	"engines": {
+		"vscode": "^1.95.0"
+	},
+	"main": "./extension.js",
+	"categories": [
+		"AI",
+		"Other"
+	],
+	"keywords": [
+		"copilot",
+		"agent",
+		"skills",
+		"SKILL.md",
+		"chat",
+		"context"
+	],
+	"activationEvents": [],
+	"contributes": {
+		"commands": [
+			{
+				"command": "nkana.generate",
+				"title": "Nkana: Scan skills",
+				"category": "Nkana",
+				"shortTitle": "Scan skills"
+			}
+		],
+		"configuration": {
+			"title": "Nkana",
+			"properties": {
+				"nkana.referencePrefix": {
+					"type": "string",
+					"default": "skill-",
+					"markdownDescription": "Prefix for every skill's `#` name. The default keeps skills distinguishable from MCP servers and built-in tools that share a name (for example the `sepia` skill vs the `sepia` MCP server). Set to an empty string for bare names."
+				},
+				"nkana.skillFolders": {
+					"type": "array",
+					"items": {
+						"type": "string"
+					},
+					"default": [
+						"~/.agents/skills",
+						"~/.claude/skills",
+						"~/.copilot/skills"
+					],
+					"markdownDescription": "Folders to scan for `<name>/SKILL.md`. Supports `~/`."
+				}
+			}
+		},
+		"languageModelTools": []
+	}
+}
