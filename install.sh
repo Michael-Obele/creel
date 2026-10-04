@@ -24,7 +24,19 @@ rm -rf "$HOME/.vscode/extensions/$(read_field publisher).nkana-"* 2>/dev/null ||
 
 rm -rf "$dest"
 mkdir -p "$dest"
-cp -r "$here"/. "$dest"/
+
+# Copy in only what a packaged build would carry. A plain `cp` ignores
+# .vscodeignore — that file is read by `vsce package`, not by us — which is how
+# a stale .vsix and a pre-rename skills.json ended up inside the installed
+# extension. rsync understands the same patterns, so reuse the ignore file as
+# the one source of truth for what ships.
+if command -v rsync >/dev/null 2>&1; then
+	rsync -a --prune-empty-dirs --exclude-from="$here/.vscodeignore" "$here"/ "$dest"/
+else
+	cp -r "$here"/. "$dest"/
+	rm -f "$dest"/*.vsix "$dest"/skills.json
+fi
+
 rm -rf "$dest/.git" "$dest/node_modules" "$dest/.github"
 
 node "$dest/generate.js"
