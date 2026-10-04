@@ -1,6 +1,6 @@
-# Publishing Nkana
+# Publishing Creel
 
-Everything needed to put Nkana on the Visual Studio Marketplace, checked on 4 October 2026.
+Everything needed to put Creel on the Visual Studio Marketplace, checked on 4 October 2026.
 
 ## Read this first: PATs expire on 1 December 2026
 
@@ -21,17 +21,17 @@ So: use a PAT now. If the extension is still maintained after December, either m
 
 | Item | State |
 | --- | --- |
-| Public repo | https://github.com/Michael-Obele/nkana |
+| Public repo | https://github.com/Michael-Obele/creel |
 | `publisher` field | `michael-obele`, already set in `package.json` |
-| Publisher ID free? | Yes. `marketplace.visualstudio.com/publishers/michael-obele` returns 404, so nobody has taken it. `nkana` and `sveltecore` are free too |
-| Existing extension named `nkana`? | No |
-| npm name `nkana` | Free (404) |
+| Publisher ID free? | Yes. `marketplace.visualstudio.com/publishers/michael-obele` returns 404. `creel` is free as a publisher ID too |
+| Existing extension named `creel`? | No. The Marketplace returns zero matches |
+| Open web | Clean. Results for "creel" are dictionary and Wikipedia entries for the word, so page one is winnable |
 | `LICENSE` | MIT, present |
 | `README.md` | Present, and the Marketplace renders it |
 | `CHANGELOG.md` | Present |
 | `icon.png` | 256x256, declared as `icon` in `package.json`. Regenerate with `python3 scripts/make-icon.py` |
 | `.vscodeignore` | Excludes `.git`, `.fallow`, `install.sh`, `scripts`, `skills.json`, `PUBLISHING.md` and `*.vsix` |
-| Packaging | Verified. `npx @vscode/vsce package` produces a 9-file, 28 KB VSIX |
+| Packaging | Verified. `npx @vscode/vsce package` produces a 9-file, ~28 KB VSIX |
 | `@vscode/vsce` | Not installed globally, but `npx @vscode/vsce` works and needs no install |
 
 ## Steps
@@ -42,6 +42,8 @@ So: use a PAT now. If the extension is still maintained after December, either m
 2. Choose **Create publisher**.
 3. Set **ID** to `michael-obele` and a display **Name** (your name, or SvelteCore Systems Ltd).
 4. The ID cannot be changed later, so get it right the first time.
+
+The publisher ID does not have to match the extension name. `michael-obele.creel` is what the listing will be called.
 
 ### 2. Create a Personal Access Token
 
@@ -56,7 +58,7 @@ So: use a PAT now. If the extension is still maintained after December, either m
 
 ```bash
 npx @vscode/vsce login michael-obele     # paste the PAT when prompted
-npx @vscode/vsce package                 # writes nkana-0.2.0.vsix
+npx @vscode/vsce package                 # writes creel-0.2.0.vsix
 npx @vscode/vsce publish                 # uploads and publishes
 ```
 
@@ -64,15 +66,15 @@ npx @vscode/vsce publish                 # uploads and publishes
 
 ### 4. Check it
 
-The listing appears at `https://marketplace.visualstudio.com/items?itemName=michael-obele.nkana` within a few minutes. Then confirm a real install works:
+The listing appears at `https://marketplace.visualstudio.com/items?itemName=michael-obele.creel` within a few minutes. Then confirm a real install works:
 
 ```bash
-code --install-extension michael-obele.nkana
+code --install-extension michael-obele.creel
 ```
 
 ## Two things to expect
 
-**The published extension starts with no skills.** The tool list is static JSON in the manifest, so a package cannot know your skills in advance. A fresh install shows the "no skills registered yet" prompt, which offers to run `Nkana: Scan skills`. That writes the list and asks for a reload. This is the one rough edge of the design, and it disappears if upstream ever stabilises the `registerToolDefinition` API.
+**The published extension starts with no skills.** The tool list is static JSON in the manifest, so a package cannot know your skills in advance. A fresh install shows the "no skills registered yet" prompt, which offers to run `Creel: Scan skills`. That writes the list and asks for a reload. This is the one rough edge of the design, and it disappears if upstream ever stabilises the `registerToolDefinition` API.
 
 **Do not install the `.vsix` over your local working copy.** Both use the same folder path, so it would replace the working install with an empty tool list. Test a `.vsix` on a different machine, or delete and reinstall from source afterwards.
 
@@ -82,7 +84,7 @@ code --install-extension michael-obele.nkana
 | --- | --- |
 | 403 Forbidden or 401 Unauthorized | The PAT was scoped to one organization instead of **All accessible organizations**, or the scope is not **Marketplace (Manage)** |
 | `vsce` cannot find the publisher | The publisher ID in `package.json` does not match the one you logged in with |
-| The extension installs but `#` shows nothing | Run `Nkana: Scan skills`, then reload the window |
+| The extension installs but `#` shows nothing | Run `Creel: Scan skills`, then reload the window |
 | A skill is missing from the `#` list | Its name collides with a built-in tool, or it duplicates another skill folder. `generate.js` prints what it skipped |
 
 ## Afterwards

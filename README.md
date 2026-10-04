@@ -1,4 +1,4 @@
-# Nkana
+# Creel
 
 Attach any number of agent skills to one Copilot chat message, anywhere in the message.
 
@@ -8,25 +8,19 @@ fix the PDF export, #skill-pdf, then check it against #skill-webapp-testing
 
 ## The name
 
-Nkana is Ịbani, the Ijaw language of the Niger Delta, for **basket**. It is in Roger Blench's *A Dictionary of Ịbani* as `nkana n. basket`, and `kana` is listed as a variant of it.
+A **creel** is the shallow woven basket an angler carries the catch in. In textile weaving it is also the frame that holds many bobbins and feeds them out.
 
-A basket is what you carry things in. You reach in and take out the one thing you need for the job in front of you. That is what this extension does with skills.
+Both senses mean the same thing here: a holder of many, drawn from one at a time. You keep your skills in the creel and take out the ones the job needs.
 
-Ijaw is my heritage language, so the name is not decoration. It joins a small family of tools named from the same place:
+The icon is drawn from code rather than committed as a binary, so it can be tweaked:
 
-| Tool | Language | Meaning |
-| --- | --- | --- |
-| [Aghara](https://github.com/Michael-Obele/aghara) | Ịbani | town crier; announces your posts |
-| [Ikoro](https://github.com/Michael-Obele) | Ịbani | the slit-gong that calls you |
-| [Goberi](https://github.com/Michael-Obele) | Kalabari | the ear that reads |
-| [Kikitai](https://github.com/Michael-Obele) | Japanese | I want to hear it |
-| **Nkana** | **Ịbani** | **basket** |
-
-There is also a Nkana in Zambia: a mining town in Kitwe, and the country's most successful football club. Different word, same spelling, so search results are mostly about football. If you came here looking for that, sorry.
+```bash
+python3 scripts/make-icon.py   # needs Pillow; writes icon.png
+```
 
 ## What it does
 
-VS Code Copilot lets you attach one skill to a message, as a `/skill` slash command at the very start. Nkana lifts that limit. Every skill in your folders becomes something you can type with `#`, and you can attach as many as you like, wherever you like in the message.
+VS Code Copilot lets you attach one skill to a message, as a `/skill` slash command at the very start. Creel lifts that limit. Every skill in your folders becomes something you can type with `#`, and you can attach as many as you like, wherever you like in the message.
 
 That works because VS Code's `#` menu is a public extension API. The [Language Model Tool API docs](https://code.visualstudio.com/api/extension-guides/ai/tools) describe two properties:
 
@@ -35,23 +29,23 @@ That works because VS Code's `#` menu is a public extension API. The [Language M
 | `canBeReferencedInPrompt: true` | "this tool shows up as an attachment that the user can add manually to their request" |
 | `toolReferenceName` | "The name for users to reference the tool in a chat prompt via `#`" |
 
-So Nkana declares one tool per skill and lets VS Code's own attachment machinery do the rest. Nothing is patched. Because the extension sits in your extensions folder, it survives every VS Code update.
+So Creel declares one tool per skill and lets VS Code's own attachment machinery do the rest. Nothing is patched. Because the extension sits in your extensions folder, it survives every VS Code update.
 
-Upstream, multi-skill selection is still an open request: [microsoft/vscode#312279](https://github.com/microsoft/vscode/issues/312279). Nkana is a working answer that does not wait for it.
+Upstream, multi-skill selection is still an open request: [microsoft/vscode#312279](https://github.com/microsoft/vscode/issues/312279). Creel is a working answer that does not wait for it.
 
 ## Install
 
 From the Marketplace, once published:
 
 ```
-code --install-extension michael-obele.nkana
+code --install-extension michael-obele.creel
 ```
 
 From source:
 
 ```bash
-git clone https://github.com/Michael-Obele/nkana.git
-cd nkana
+git clone https://github.com/Michael-Obele/creel.git
+cd creel
 ./install.sh
 ```
 
@@ -59,7 +53,7 @@ Either way, reload the window afterwards. `Developer: Reload Window`, or `Ctrl+R
 
 `install.sh` copies the extension into `~/.vscode/extensions/` and runs the scan there, so your personal skill list never ends up in this repo.
 
-If you install a packaged `.vsix` instead, the tool list starts empty by design. Run `Nkana: Scan skills` from the Command Palette, then reload. See [PUBLISHING.md](./PUBLISHING.md) for why that step exists.
+If you install a packaged `.vsix` instead, the tool list starts empty by design. Run `Creel: Scan skills` from the Command Palette, then reload. See [PUBLISHING.md](./PUBLISHING.md) for why that step exists.
 
 ## Use
 
@@ -68,14 +62,14 @@ If you install a packaged `.vsix` instead, the tool list starts empty by design.
 | Attach a skill | Type `#` in chat and pick one, or type `#skill-` plus a few letters to filter |
 | Attach several | Just keep adding them. Only exact duplicates get collapsed |
 | Attach mid-message | Yes. References sit wherever you put them |
-| Re-scan after adding skills | `Nkana: Scan skills` from the Command Palette, then reload |
-| Re-scan from a terminal | `node ~/.vscode/extensions/michael-obele.nkana-0.2.0/generate.js` |
+| Re-scan after adding skills | `Creel: Scan skills` from the Command Palette, then reload |
+| Re-scan from a terminal | `node ~/.vscode/extensions/michael-obele.creel-0.2.0/generate.js` |
 
 The `#` list only appears in agent mode.
 
 ## What the model actually receives
 
-This part matters more than it looks. A skill only works if the model treats what it gets as instructions rather than as reading material. A plain markdown file returned from a tool reads as reference data, so the model files it away instead of following it. Nkana wraps every skill:
+This part matters more than it looks. A skill only works if the model treats what it gets as instructions rather than as reading material. A plain markdown file returned from a tool reads as reference data, so the model files it away instead of following it. Creel wraps every skill:
 
 ```text
 <skill name="ultrathink" path="/home/node/.agents/skills/ultrathink/SKILL.md">
@@ -96,7 +90,7 @@ VS Code has its own version of this framing, in `agentPrompt.tsx`. It says:
 
 > "Always check if any skills apply to the user's request… Multiple skill files may be needed for a single request."
 
-It only renders when `chat.useSkillAdherencePrompt` is on, and that setting defaults to off. Nkana applies the framing whether or not you have it on.
+It only renders when `chat.useSkillAdherencePrompt` is on, and that setting defaults to off. Creel applies the framing whether or not you have it on.
 
 ## How it works
 
@@ -117,8 +111,8 @@ The scanner:
 
 | Setting | Default | Purpose |
 | --- | --- | --- |
-| `nkana.referencePrefix` | `skill-` | Prefix on every `#` name. This is what keeps a skill apart from an MCP server with the same name, such as the `sepia` skill and the `sepia` MCP server, or `playwright`, or `exa`. Set it to `""` for bare names. |
-| `nkana.skillFolders` | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` | Where to look for `<name>/SKILL.md`. Supports `~/`. |
+| `creel.referencePrefix` | `skill-` | Prefix on every `#` name. This is what keeps a skill apart from an MCP server with the same name, such as the `sepia` skill and the `sepia` MCP server, or `playwright`, or `exa`. Set it to `""` for bare names. |
+| `creel.skillFolders` | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` | Where to look for `<name>/SKILL.md`. Supports `~/`. |
 
 ## Limits
 
@@ -130,26 +124,17 @@ The scanner:
 
 ## Development
 
-The committed `package.json` ships `"languageModelTools": []` on purpose, so no
-personal skill list is ever published. The generator therefore refuses to run
-inside the repo:
+The committed `package.json` ships `"languageModelTools": []` on purpose, so no personal skill list is ever published. The generator therefore refuses to run inside the repo:
 
 ```text
 $ node generate.js
-Nkana: refusing to write a skill list into the repo.
+Creel: refusing to write a skill list into the repo.
 Run the generator in the installed copy instead:
-  node ~/.vscode/extensions/michael-obele.nkana-0.2.0/generate.js
+  node ~/.vscode/extensions/michael-obele.creel-0.2.0/generate.js
 Pass --force only if you really mean to commit a skill list.
 ```
 
-Run it in the installed copy, which is what `install.sh` does. Pass `--reset` to
-clear a list that got written by mistake, and `--force` to override the guard.
-
-The icon is drawn from code rather than committed as an opaque binary:
-
-```bash
-python3 scripts/make-icon.py   # needs Pillow; writes icon.png
-```
+Run it in the installed copy, which is what `install.sh` does. Pass `--reset` to clear a list that got written by mistake, and `--force` to override the guard.
 
 ## Releasing
 

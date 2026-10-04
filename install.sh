@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Install (or reinstall) Nkana into your VS Code extensions folder, and build
+# Install (or reinstall) Creel into your VS Code extensions folder, and build
 # the skill list there.
 #
 # Generation deliberately happens in the INSTALLED copy, never in the repo, so
@@ -17,7 +17,9 @@ name="$(read_field publisher).$(read_field name)-$(read_field version)"
 dest="$HOME/.vscode/extensions/$name"
 
 # Remove any previously installed version first: two copies would register the
-# same tool ids and collide.
+# same tool ids and collide. The second glob clears installs from before the
+# rename to Creel, which would otherwise sit there shadowing this one.
+rm -rf "$HOME/.vscode/extensions/$(read_field publisher).creel-"* 2>/dev/null || true
 rm -rf "$HOME/.vscode/extensions/$(read_field publisher).nkana-"* 2>/dev/null || true
 
 rm -rf "$dest"

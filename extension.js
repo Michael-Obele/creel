@@ -1,5 +1,5 @@
 "use strict";
-// Nkana. Registers one language-model tool per skill, and the command that
+// Creel. Registers one language-model tool per skill, and the command that
 // (re)builds the tool list.
 //
 // The interesting part is `renderSkill`. A skill only takes effect if the model
@@ -163,13 +163,13 @@ function activate(context) {
   }
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("nkana.generate", async () => {
+    vscode.commands.registerCommand("creel.generate", async () => {
       let result;
       try {
         result = apply(extensionDir);
       } catch (error) {
         vscode.window.showErrorMessage(
-          `Nkana: could not scan skills. ${error.message}`,
+          `Creel: could not scan skills. ${error.message}`,
         );
         return;
       }
@@ -177,7 +177,7 @@ function activate(context) {
         ? ` (${result.skipped.length} skipped as duplicates or reserved names)`
         : "";
       const choice = await vscode.window.showInformationMessage(
-        `Nkana: ${result.count} skills are now #-referenceable${detail}. Reload to apply.`,
+        `Creel: ${result.count} skills are now #-referenceable${detail}. Reload to apply.`,
         "Reload Window",
       );
       if (choice === "Reload Window") {
@@ -189,12 +189,12 @@ function activate(context) {
   if (!tools.length) {
     vscode.window
       .showInformationMessage(
-        'Nkana: no skills registered yet. Run "Nkana: Scan skills" to build the # list.',
+        'Creel: no skills registered yet. Run "Creel: Scan skills" to build the # list.',
         "Scan skills",
       )
       .then((choice) => {
         if (choice === "Scan skills") {
-          vscode.commands.executeCommand("nkana.generate");
+          vscode.commands.executeCommand("creel.generate");
         }
       });
   }

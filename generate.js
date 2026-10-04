@@ -1,10 +1,10 @@
 "use strict";
 /**
- * Nkana: the scanning half.
+ * Creel: the scanning half.
  *
  * Everything that turns "folders full of SKILL.md" into "a `#`-referenceable
  * tool per skill" lives here, so the CLI (`node generate.js`) and the
- * `Nkana: Scan skills` command share one implementation.
+ * `Creel: Scan skills` command share one implementation.
  *
  * Why a generator exists at all: `contributes.languageModelTools` is static
  * JSON in the manifest. VS Code reads it when the extension loads, and the
@@ -166,7 +166,7 @@ function buildEntries(skills, prefix) {
     const meta = readFrontmatter(skill.skillFile);
     const title = meta.name || skill.folderName;
     const summary = (meta.description || `The ${title} skill.`).slice(0, 900);
-    const id = `nkana_${ref.replace(/[^a-z0-9]+/g, "_")}`;
+    const id = `creel_${ref.replace(/[^a-z0-9]+/g, "_")}`;
 
     tools.push({
       name: id,
@@ -179,7 +179,7 @@ function buildEntries(skills, prefix) {
         `not reference material. ${summary}`,
       canBeReferencedInPrompt: true,
       icon: "$(lightbulb)",
-      tags: ["skills", "nkana"],
+      tags: ["skills", "creel"],
       inputSchema: { type: "object", properties: {} },
     });
     paths[id] = { path: skill.skillFile, name: title, description: summary };
@@ -224,16 +224,16 @@ function apply(extensionDir) {
   return { count: tools.length, skipped };
 }
 
-/** Read `nkana.referencePrefix` if we are running inside VS Code. */
+/** Read `creel.referencePrefix` if we are running inside VS Code. */
 function readConfiguredPrefix() {
   const vscode = require("vscode");
-  return vscode.workspace.getConfiguration("nkana").get("referencePrefix");
+  return vscode.workspace.getConfiguration("creel").get("referencePrefix");
 }
 
-/** Read `nkana.skillFolders` if we are running inside VS Code. */
+/** Read `creel.skillFolders` if we are running inside VS Code. */
 function readConfiguredFolders() {
   const vscode = require("vscode");
-  return vscode.workspace.getConfiguration("nkana").get("skillFolders");
+  return vscode.workspace.getConfiguration("creel").get("skillFolders");
 }
 
 /**
@@ -260,7 +260,7 @@ if (require.main === module) {
 
   if (args.includes("--reset")) {
     const { count } = reset(__dirname);
-    console.log(`Nkana: cleared the tool list (removed ${count} tools).`);
+    console.log(`Creel: cleared the tool list (removed ${count} tools).`);
     process.exit(0);
   }
 
@@ -269,16 +269,16 @@ if (require.main === module) {
   // almost always a mistake, so refuse unless --force is passed.
   if (fs.existsSync(path.join(__dirname, ".git")) && !args.includes("--force")) {
     console.error(
-      "Nkana: refusing to write a skill list into the repo.\n" +
+      "Creel: refusing to write a skill list into the repo.\n" +
         "Run the generator in the installed copy instead:\n" +
-        "  node ~/.vscode/extensions/michael-obele.nkana-0.2.0/generate.js\n" +
+        "  node ~/.vscode/extensions/michael-obele.creel-0.2.0/generate.js\n" +
         "Pass --force only if you really mean to commit a skill list.",
     );
     process.exit(1);
   }
 
   const { count, skipped } = apply(__dirname);
-  console.log(`Nkana: ${count} skills are now #-referenceable.`);
+  console.log(`Creel: ${count} skills are now #-referenceable.`);
   for (const line of skipped) {
     console.log(`  skipped ${line}`);
   }

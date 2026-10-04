@@ -1,85 +1,101 @@
 #!/usr/bin/env python3
-"""Draw the Nkana marketplace icon (a woven basket) as icon.png.
+"""Draw the Creel marketplace icon (a wicker creel) as icon.png.
 
-Kept as a script so the icon can be regenerated or tweaked rather than being an
-opaque binary.  Requires Pillow.  Output is 256x256 PNG, which satisfies the
-marketplace minimum of 128x128 (256 is the recommended size for Retina).
+A creel is the shallow woven basket an angler carries the catch in. The shape
+here is chosen to say that and nothing else: a wide, shallow, tapered basket
+with a woven lattice over the whole body and a shoulder strap rising from the
+rim. Wide-and-shallow plus visible weave is what separates a creel from a
+handbag in a 256 px square.
+
+Kept as a script rather than a committed binary so the icon can be tweaked.
+Requires Pillow. Output is 256x256 PNG, the Marketplace's recommended size
+(128x128 is the minimum).
 """
 from PIL import Image, ImageDraw
 
-S = 4  # supersample factor; the image is drawn big and downscaled for smooth edges
+S = 4  # supersample factor; draw big, downscale once for smooth edges
 W = 256 * S
 
-BG = (34, 39, 46, 255)  # slate, sits well on both light and dark VS Code themes
-BASKET = (232, 181, 99, 255)  # warm ochre
-WEAVE = (168, 118, 52, 255)  # darker ochre for the weave lines
+BG = (34, 39, 46, 255)  # slate; sits well on light and dark VS Code themes
+WICKER = (232, 181, 99, 255)  # warm ochre
+WEAVE = (176, 124, 56, 255)  # darker ochre for the lattice
+STRAP = (198, 150, 80, 255)  # tan leather strap
 
-TOP_Y = 118 * S
-BOT_Y = 206 * S
-TOP_HALF = 100 * S
-BOT_HALF = 76 * S
-
-
-def half_width(y: float) -> float:
-    """Half-width of the basket at height `y`. The body tapers inward."""
-    t = (y - TOP_Y) / (BOT_Y - TOP_Y)
-    t = min(max(t, 0.0), 1.0)
-    return TOP_HALF + (BOT_HALF - TOP_HALF) * t
+# Geometry, in output pixels before the supersample factor is applied.
+CX = 128  # everything is centred on this
+TOP_Y = 132
+BOT_Y = 208
+TOP_HALF = 98  # wider at the rim
+BOT_HALF = 80  # narrower at the foot, so the sides taper
+FOOT = 9  # how far the rounded foot sticks out below BOT_Y
+STRAP_ARC = (26, 74, 230, 234)  # low and wide; the ends hide behind the body
 
 
 def main() -> None:
     img = Image.new("RGBA", (W, W), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
+    def px(*values):
+        """Scale output pixels into supersampled pixels."""
+        return [v * S for v in values]
+
+    cx = CX * S
+    top_y, bot_y = TOP_Y * S, BOT_Y * S
+    top_half, bot_half = TOP_HALF * S, BOT_HALF * S
+
     # Background tile.
     d.rounded_rectangle([0, 0, W - 1, W - 1], radius=52 * S, fill=BG)
 
-    # Basket body: a trapezoid (all four corners, so it does not close with a
-    # stray diagonal) with a rounded foot.
-    d.polygon(
-        [
-            (W / 2 - TOP_HALF, TOP_Y),
-            (W / 2 + TOP_HALF, TOP_Y),
-            (W / 2 + half_width(BOT_Y), BOT_Y),
-            (W / 2 - half_width(BOT_Y), BOT_Y),
-        ],
-        fill=BASKET,
+    # Shoulder strap first, so the body covers its ends and it reads as passing
+    # behind the basket rather than sitting on top like a handle.
+    d.arc(px(*STRAP_ARC), start=180, end=360, fill=STRAP, width=9 * S)
+
+    # Body outline: a tapered basket with a rounded foot.
+    outline = [
+        (cx - top_half, top_y),
+        (cx + top_half, top_y),
+        (cx + bot_half, bot_y),
+        (cx - bot_half, bot_y),
+    ]
+    foot = [cx - bot_half, bot_y - FOOT * S, cx + bot_half, bot_y + FOOT * S]
+
+    # Fill the body, then build a matching mask to clip the weave to it.
+    d.polygon(outline, fill=WICKER)
+    d.rounded_rectangle(foot, radius=12 * S, fill=WICKER)
+
+    mask = Image.new("L", (W, W), 0)
+    md = ImageDraw.Draw(mask)
+    md.polygon(outline, fill=255)
+    md.rounded_rectangle(foot, radius=12 * S, fill=255)
+
+    # Lattice: two crossing sets of diagonals, clipped to the body. ImageDraw
+    # has no clipping of its own, so the weave goes on its own layer and is
+    # composited through the mask.
+    lattice = Image.new("RGBA", (W, W), (0, 0, 0, 0))
+    ld = ImageDraw.Draw(lattice)
+    step = 20 * S
+    for i in range(-8, 22):
+        x = 4 * S + i * step
+        ld.line([(x, 100 * S), (x + 150 * S, 245 * S)], fill=WEAVE, width=4 * S)
+        ld.line([(x, 245 * S), (x + 150 * S, 100 * S)], fill=WEAVE, width=4 * S)
+    img = Image.alpha_composite(
+        img, Image.composite(lattice, Image.new("RGBA", (W, W), (0, 0, 0, 0)), mask)
     )
-    d.rounded_rectangle(
-        [W / 2 - BOT_HALF, BOT_Y - 14 * S, W / 2 + BOT_HALF, BOT_Y + 10 * S],
-        radius=12 * S,
-        fill=BASKET,
-    )
 
-    # Weave: horizontal bands, each clipped to the body at its own height.
-    for i in range(1, 5):
-        y = TOP_Y + (BOT_Y - TOP_Y) * i / 5
-        h = half_width(y) - 8 * S
-        d.line([(W / 2 - h, y), (W / 2 + h, y)], fill=WEAVE, width=5 * S)
-
-    # Weave: vertical stakes, leaning inward with the taper.
-    for dx in (-52, -18, 18, 52):
-        d.line(
-            [
-                (W / 2 + dx * S, TOP_Y + 6 * S),
-                (W / 2 + dx * S * 0.76, BOT_Y - 8 * S),
-            ],
-            fill=WEAVE,
-            width=5 * S,
-        )
-
-    # Rim, then the handle arch above it.
+    # Rim across the top, flush with the body rather than overhanging, so it
+    # reads as the basket's own edge and not a plank resting on it.
+    d = ImageDraw.Draw(img)
     d.line(
-        [(W / 2 - 104 * S, TOP_Y), (W / 2 + 104 * S, TOP_Y)],
-        fill=BASKET,
-        width=14 * S,
+        [(cx - top_half, top_y), (cx + top_half, top_y)],
+        fill=WICKER,
+        width=11 * S,
     )
-    d.arc(
-        [W / 2 - 62 * S, 54 * S, W / 2 + 62 * S, 142 * S],
-        start=180,
-        end=360,
-        fill=BASKET,
-        width=13 * S,
+
+    # A darker line at the foot so the basket looks like it is standing.
+    d.line(
+        [(cx - bot_half + 6 * S, bot_y + 5 * S), (cx + bot_half - 6 * S, bot_y + 5 * S)],
+        fill=WEAVE,
+        width=3 * S,
     )
 
     img.resize((256, 256), Image.LANCZOS).save("icon.png")

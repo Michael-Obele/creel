@@ -1,69 +1,69 @@
 {
-	"name": "nkana",
-	"displayName": "Nkana: attach skills with #",
-	"description": "Attach any number of agent skills to one Copilot chat message, anywhere in the message, with # references.",
-	"version": "0.2.0",
-	"publisher": "michael-obele",
-	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/Michael-Obele/nkana.git"
-	},
-	"bugs": {
-		"url": "https://github.com/Michael-Obele/nkana/issues"
-	},
-	"homepage": "https://github.com/Michael-Obele/nkana#readme",
-	"engines": {
-		"vscode": "^1.95.0"
-	},
-	"main": "./extension.js",
-	"icon": "icon.png",
-	"categories": [
-		"AI",
-		"Other"
-	],
-	"keywords": [
-		"copilot",
-		"agent",
-		"skills",
-		"SKILL.md",
-		"chat",
-		"context"
-	],
-	"activationEvents": [
-		"onStartupFinished"
-	],
-	"contributes": {
-		"commands": [
-			{
-				"command": "nkana.generate",
-				"title": "Nkana: Scan skills",
-				"category": "Nkana",
-				"shortTitle": "Scan skills"
-			}
-		],
-		"configuration": {
-			"title": "Nkana",
-			"properties": {
-				"nkana.referencePrefix": {
-					"type": "string",
-					"default": "skill-",
-					"markdownDescription": "Prefix for every skill's `#` name. The default keeps skills distinguishable from MCP servers and built-in tools that share a name (for example the `sepia` skill vs the `sepia` MCP server). Set to an empty string for bare names."
-				},
-				"nkana.skillFolders": {
-					"type": "array",
-					"items": {
-						"type": "string"
-					},
-					"default": [
-						"~/.agents/skills",
-						"~/.claude/skills",
-						"~/.copilot/skills"
-					],
-					"markdownDescription": "Folders to scan for `<name>/SKILL.md`. Supports `~/`."
-				}
-			}
-		},
-		"languageModelTools": []
-	}
+  "name": "creel",
+  "displayName": "Creel: attach skills with #",
+  "description": "Attach any number of agent skills to one Copilot chat message, anywhere in the message, with # references.",
+  "version": "0.2.0",
+  "publisher": "michael-obele",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Michael-Obele/creel.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Michael-Obele/creel/issues"
+  },
+  "homepage": "https://github.com/Michael-Obele/creel#readme",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "main": "./extension.js",
+  "icon": "icon.png",
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "copilot",
+    "agent",
+    "skills",
+    "SKILL.md",
+    "chat",
+    "context"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "creel.generate",
+        "title": "Creel: Scan skills",
+        "category": "Creel",
+        "shortTitle": "Scan skills"
+      }
+    ],
+    "configuration": {
+      "title": "Creel",
+      "properties": {
+        "creel.referencePrefix": {
+          "type": "string",
+          "default": "skill-",
+          "markdownDescription": "Prefix for every skill's `#` name. The default keeps skills distinguishable from MCP servers and built-in tools that share a name (for example the `sepia` skill vs the `sepia` MCP server). Set to an empty string for bare names."
+        },
+        "creel.skillFolders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "~/.agents/skills",
+            "~/.claude/skills",
+            "~/.copilot/skills"
+          ],
+          "markdownDescription": "Folders to scan for `<name>/SKILL.md`. Supports `~/`."
+        }
+      }
+    },
+    "languageModelTools": []
+  }
 }
