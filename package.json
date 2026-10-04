@@ -29,7 +29,9 @@
 		"chat",
 		"context"
 	],
-	"activationEvents": [],
+	"activationEvents": [
+		"onStartupFinished"
+	],
 	"contributes": {
 		"commands": [
 			{
