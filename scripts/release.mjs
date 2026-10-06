@@ -229,14 +229,21 @@ function changelogSection(version) {
   if (!fs.existsSync(file)) return null;
   const text = fs.readFileSync(file, "utf8");
   const escaped = version.replace(/\./g, "\\.");
-  const match = new RegExp(
-    `^## ${escaped}\\s*$([\\s\\S]*?)(?=^## |$)`,
-    "m",
-  ).exec(text);
-  if (!match) return null;
-  const body = match[1].trim();
-  if (!body || body.includes(PLACEHOLDER)) return null;
-  return body;
+
+  // Split on the heading marker rather than matching a section with a lazy
+  // quantifier: `^## X\s*$([\s\S]*?)(?=^## |$)` matches but captures *nothing*,
+  // because `$` is satisfied at the end of the heading line itself, so the
+  // capture never advances into the content. That bug shipped a GitHub release
+  // with generated notes instead of the changelog.
+  const parts = text.split(/^## /m);
+  for (const part of parts) {
+    if (!new RegExp(`^${escaped}(?:\\r?\\n|$)`).test(part)) continue;
+    const newline = part.indexOf("\n");
+    const body = (newline === -1 ? "" : part.slice(newline + 1)).trim();
+    if (!body || body.includes(PLACEHOLDER)) return null;
+    return body;
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -424,6 +431,27 @@ function cmdRelease(spec) {
   );
 }
 
+/**
+ * Print the release notes for a version — what `gh release create` will use.
+ * Here so the section can be checked (and tested) before anything is public.
+ */
+function cmdNotes(spec) {
+  const version = spec || currentVersion();
+  const section = changelogSection(version);
+  if (section !== null) {
+    console.log(section);
+    return;
+  }
+  const file = path.join(root, "CHANGELOG.md");
+  const hasHeading =
+    fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(`## ${version}`);
+  console.log(
+    hasHeading
+      ? `(CHANGELOG has ## ${version} but only the placeholder, so gh would generate notes)`
+      : `(no ## ${version} section in CHANGELOG.md, so gh would generate notes)`,
+  );
+}
+
 function cmdHelp() {
   console.log(`
 Creel release commands
@@ -450,6 +478,7 @@ const steps = {
   release: () => cmdRelease(versionSpec),
   build: () => cmdBuild(),
   attach: () => cmdAttach(),
+  notes: () => cmdNotes(versionSpec),
   help: () => cmdHelp(),
 };
 
