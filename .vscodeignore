@@ -6,5 +6,10 @@
 install.sh
 skills.json
 scripts/**
+prototype/**
+test/**
+tests/**
+.playwright-mcp/**
+docs/**
 PUBLISHING.md
 *.vsix

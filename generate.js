@@ -1,26 +1,18 @@
 "use strict";
 /**
- * Creel: the scanning half.
+ * The scanning half.
  *
- * Everything that turns "folders full of SKILL.md" into "a `#`-referenceable
- * tool per skill" lives here, so the CLI (`node generate.js`) and the
- * `Creel: Scan skills` command share one implementation.
- *
- * Why a generator exists at all: `contributes.languageModelTools` is static
- * JSON in the manifest. VS Code reads it when the extension loads, and the
- * stable `vscode.lm.registerTool` API refuses tools that are not declared
- * there. So the list has to be written to disk ahead of load. There is no
- * runtime-only path outside the proposed `registerToolDefinition` API.
+ * `contributes.languageModelTools` is static JSON read at load, and
+ * `registerTool` refuses anything not declared there — so the list must be
+ * written to disk ahead of time. Hence a generator.
  */
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
 /**
- * `#` names already owned by VS Code or the Copilot extension.
- * A skill whose folder name collides is SKIPPED rather than registered, so it
- * can never silently shadow a built-in tool. It still works exactly as before
- * via `/name` and on-demand loading. It just does not get a `#` entry.
+ * `#` names owned by VS Code or Copilot. A collision is skipped, never shadowed —
+ * the skill still works via `/name` and on-demand loading, it just gets no `#`.
  */
 const RESERVED = new Set([
   // Copilot / chat
@@ -100,11 +92,8 @@ function toReferenceName(folderName) {
 }
 
 /**
- * Find every skill folder, de-duplicated by its REAL path.
- *
- * This matters: `~/.claude/skills/<name>` is usually a symlink to
- * `~/.agents/skills/<name>`, and `~/.copilot/skills` often holds real copies,
- * so the same skill can appear three times.
+ * Every skill folder, de-duplicated by real path. The same skill is usually
+ * symlinked into all three roots, and `~/.copilot/skills` often holds copies.
  */
 function scanSkills(folders) {
   const byRealPath = new Map();
@@ -141,8 +130,31 @@ function scanSkills(folders) {
   return [...byRealPath.values()];
 }
 
+/**
+ * The standing text for one tool: the whole argument for calling it, and the
+ * only surface paid for on every request.
+ *
+ * `baseline` keeps the wording creel has always shipped. The other variants
+ * drop the `#` clause — the tool name already encodes it — and the sentence
+ * arguing against the built-in skill tool, per
+ * docs/plans/2026-10-05-prompt-simplification-design.md. Measured across the
+ * 101 registered tools: 9,949 chars full versus 3,106 lean, about 1,711 tokens
+ * off every request whether or not anything is attached.
+ *
+ * @param {string} variant `baseline` or the simplified shapes
+ * @param {string} title frontmatter name, or the folder name
+ * @param {string} ref the `#` reference, e.g. `skill-tdd`
+ * @returns {string}
+ */
+function standingDescription(variant, title, ref) {
+  if (variant === "baseline") {
+    return `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`;
+  }
+  return `Load the "${title}" skill.`;
+}
+
 /** Turn collected skills into manifest entries plus the id -> skill map. */
-function buildEntries(skills, prefix) {
+function buildEntries(skills, prefix, variant = "baseline") {
   const tools = [];
   const paths = {};
   const used = new Set(RESERVED);
@@ -166,23 +178,32 @@ function buildEntries(skills, prefix) {
     const meta = readFrontmatter(skill.skillFile);
     const title = meta.name || skill.folderName;
     const summary = (meta.description || `The ${title} skill.`).slice(0, 900);
-    const id = `creel_${ref.replace(/[^a-z0-9]+/g, "_")}`;
+    // The id is what the model sees as the function name, so it stays plain:
+    // `skill_tdd`, not a branded prefix it has no use for.
+    const id = ref.replace(/[^a-z0-9]+/g, "_");
 
     tools.push({
       name: id,
       toolReferenceName: ref,
       displayName: `${title} (skill)`,
-      userDescription: summary.slice(0, 200),
-      modelDescription:
-        `Load the "${title}" skill. Its instructions are authoritative for this request. ` +
-        `Apply them before producing other output about the task; they are directives, ` +
-        `not reference material. ${summary}`,
+      userDescription: `Attach with #${ref}. ${summary}`.slice(0, 200),
+      // Paid for on every request — ~101 of these sit in the tool list at
+      // once, whether or not anything is attached, so this is the only text
+      // that can change the decision to call. The framing that shapes the
+      // payload is in renderSkill, after the call.
+      // Measured: a long BLOCKING/NEVER version changed nothing.
+      modelDescription: standingDescription(variant, title, ref),
       canBeReferencedInPrompt: true,
       icon: "$(lightbulb)",
-      tags: ["skills", "creel"],
+      tags: ["skills"],
       inputSchema: { type: "object", properties: {} },
     });
-    paths[id] = { path: skill.skillFile, name: title, description: summary };
+    paths[id] = {
+      path: skill.skillFile,
+      name: title,
+      description: summary,
+      reference: ref,
+    };
   }
 
   return { tools, paths, skipped };
@@ -201,18 +222,24 @@ function apply(extensionDir) {
   try {
     settings.prefix = readConfiguredPrefix();
     settings.folders = readConfiguredFolders();
+    settings.variant = readConfiguredVariant();
   } catch {
     // Settings are unavailable outside the extension host; use defaults.
   }
 
   const prefix = settings.prefix ?? "skill-";
+  const variant = settings.variant ?? "baseline";
   const folders = settings.folders ?? [
     "~/.agents/skills",
     "~/.claude/skills",
     "~/.copilot/skills",
   ];
 
-  const { tools, paths, skipped } = buildEntries(scanSkills(folders), prefix);
+  const { tools, paths, skipped } = buildEntries(
+    scanSkills(folders),
+    prefix,
+    variant,
+  );
 
   fs.writeFileSync(
     path.join(extensionDir, "skills.json"),
@@ -228,6 +255,12 @@ function apply(extensionDir) {
 function readConfiguredPrefix() {
   const vscode = require("vscode");
   return vscode.workspace.getConfiguration("creel").get("referencePrefix");
+}
+
+/** Read `creel.wrapperVariant` if we are running inside VS Code. */
+function readConfiguredVariant() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("wrapperVariant");
 }
 
 /** Read `creel.skillFolders` if we are running inside VS Code. */
@@ -252,7 +285,14 @@ function reset(extensionDir) {
   return { count };
 }
 
-module.exports = { RESERVED, scanSkills, buildEntries, apply, reset };
+module.exports = {
+  RESERVED,
+  scanSkills,
+  buildEntries,
+  apply,
+  reset,
+  standingDescription,
+};
 
 // CLI entry: node generate.js [--reset] [--force]
 if (require.main === module) {
@@ -267,7 +307,10 @@ if (require.main === module) {
   // The committed manifest must ship an empty tool list, so a published package
   // never carries someone's personal skills. Writing a list into the repo is
   // almost always a mistake, so refuse unless --force is passed.
-  if (fs.existsSync(path.join(__dirname, ".git")) && !args.includes("--force")) {
+  if (
+    fs.existsSync(path.join(__dirname, ".git")) &&
+    !args.includes("--force")
+  ) {
     console.error(
       "Creel: refusing to write a skill list into the repo.\n" +
         "Run the generator in the installed copy instead:\n" +

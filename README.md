@@ -42,7 +42,7 @@ A creel is the basket an angler keeps the catch in, and the frame that holds man
 
 ## Install
 
-Once it is on the Marketplace:
+From the Marketplace:
 
 ```bash
 code --install-extension michael-obele.creel
@@ -152,9 +152,64 @@ Pass --force only if you really mean to commit a skill list.
 
 Run it in the installed copy, which is what `install.sh` does. Pass `--reset` to clear a list that got written by mistake, and `--force` to override the guard.
 
+### Debugging what the model receives
+
+The tool list is static JSON read at load, so a development build cannot add
+tools the installed copy does not already have. The installed copy is therefore
+the test rig, and the debugging aids are settings rather than build flags.
+
+Set `creel.developerMode` to turn on two commands that stay hidden from the
+Command Palette otherwise:
+
+| Command                        | What it shows                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------------- |
+| **Creel: Show last injection** | The exact text the last invoked skill handed the model, with its variant and size. |
+| **Creel: Preview wrapper**     | Renders any skill's wrapper without invoking a model.                              |
+
+`creel.wrapperVariant` picks the wrapper shape, and it is read on every call —
+so changing it needs no reinstall and no reload:
+
+| Value                | Shape                                                                                                                               |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `baseline` (default) | What creel ships today: directive, precedence, applicability note, file listing.                                                    |
+| `design-doc`         | The simplified shape in [the design doc](./docs/plans/2026-10-05-prompt-simplification-design.md): one directive line and the body. |
+| `native`             | The built-in skill tool's own result, reproduced from the shipped bundle.                                                           |
+
+Developer mode also switches on automatically in an Extension Development Host
+(`F5`), or when a `.creel-dev` file sits in the extension folder. In a
+development host **Creel: Scan skills** asks first, because the scan result
+would land in the committed `package.json`.
+
+While developer mode is on, every invocation is appended to `injections.jsonl`
+in the extension's global storage — tool, variant, size, timestamp — so a turn
+can be attributed to the variant that produced it.
+
+Both test suites run against a stub `vscode`, so no editor is needed:
+
+```bash
+node tests/wrapper-shapes.cjs
+node tests/activate-smoke.cjs
+```
+
 ## Releasing
 
-See [PUBLISHING.md](./PUBLISHING.md).
+Three commands, in this order:
+
+| Command                 | What it does                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------- |
+| `bun run release`       | Bumps the version in every file that carries it, commits, tags `vX.Y.Z`, pushes, creates the GitHub release. |
+| `bun run build`         | Packages `creel-X.Y.Z.vsix` from that version.                                                    |
+| `bun run attach`        | Uploads the `.vsix` onto the GitHub release.                                                      |
+
+Pass `patch` (default), `minor`, `major` or an exact `x.y.z` after `bun run
+release`. `bun run bump` stops before anything is pushed, and every command
+accepts `--dry-run`, which prints what would change and touches nothing.
+
+The Marketplace upload stays manual: take `creel-X.Y.Z.vsix` to the
+[publisher portal](https://marketplace.visualstudio.com/manage/publishers/michael-obele).
+
+Full runbook — what each command edits, the safety rails, and the checks to run
+before and after: [PUBLISHING.md](./PUBLISHING.md).
 
 ## License
 

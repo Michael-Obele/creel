@@ -4,3 +4,14 @@ node_modules/
 
 # Generated per machine. Never commit a personal skill list.
 skills.json
+
+# Local scratch — the prototype and any test harnesses stay out of the repo.
+prototype/
+test/
+
+# Browser-automation snapshots from driving the prototype.
+.playwright-mcp/
+
+# Design docs are working notes, not shipped content.
+docs/
+tests/

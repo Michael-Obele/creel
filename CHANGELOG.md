@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.3.0
+
+### Debugging what the model actually receives
+
+- `creel.developerMode` turns on two commands that stay hidden from the Command
+  Palette otherwise: **Creel: Show last injection** — the exact text a skill
+  handed the model, with its variant and size — and **Creel: Preview wrapper**,
+  which renders any skill without invoking a model.
+- `creel.wrapperVariant` picks the wrapper shape: `baseline` (what ships today),
+  `design-doc`, `must-keep` or `native`. It is read on every call, so changing it
+  needs no reinstall and no reload.
+- In developer mode every invocation is appended to `injections.jsonl` in the
+  extension's global storage — tool, variant, size, timestamp — so a turn can be
+  attributed to the variant that produced it.
+- Scanning inside an Extension Development Host now asks first, because the scan
+  result would otherwise land in the committed manifest.
+
+### The audit stops counting misses that did not happen
+
+- `tool.execution_complete` is read at last. A call that reported an error gets
+  the new **FAILED** verdict instead of being scored as a hit; a call with no
+  recorded completion still reads HIT, rather than inventing a failure.
+- References inside pasted or quoted output get the new **QUOTED** verdict and
+  are excluded from every rate. Against this machine's transcripts that removed
+  25 messages and 13 references, taking the load rate from 56% to 76%.
+- **NATIVE** now reads "the skill arrived, but creel's wrapper did not run",
+  instead of blaming a directive framing this configuration may not use.
+
+### Housekeeping
+
+- `bun run release`, `build`, `attach` and `bump` automate the version bump,
+  the tag, the GitHub release and the `.vsix` build.
+- Marketplace listing fields added: `pricing`, `galleryBanner`, `sponsor`.
+- A fourth wrapper shape, `must-keep`, keeps the directive, the applicability
+  note and the file listing while dropping the precedence paragraph.
+
+### Not in this release
+
+- The wrapper default is still `baseline`. The simplification the design doc
+  recommends ships only once real turns show adherence holds.
+- The `UNACTED` compliance verdict.
+
 ## 0.2.1
 
 README rewritten as a landing page: centered hero with badges and jump links, a

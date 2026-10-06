@@ -1,28 +1,128 @@
 # Publishing Creel
 
-Creel is live on the Marketplace at `michael-obele.creel`, first published 4 October 2026 at version 0.2.0. The publisher, the listing and the icon are all in place, so a release from here is just: bump, build, upload.
+Creel is live on the Marketplace at `michael-obele.creel`, first published 4 October 2026 at version 0.2.0.
 
-The fastest route needs no developer token at all: build the package on your machine, then upload the file through the Marketplace website. Set up token publishing only when you want repeat releases or CI.
+**Releases are done by hand, on purpose.** There is no CI workflow and no credential to rotate. A hand upload through the Marketplace website has never needed a token, so it is the one path unaffected by the Personal Access Token retirement on 1 December 2026. For an extension released a few times a year, that beats maintaining a pipeline.
 
-The **Create the publisher** and **Filling in About you** steps below are kept as the record of what was set up. On a normal release, skip straight to **Build the package**.
+Everything below the checklist is reference.
+
+## One-command release
+
+`scripts/release.mjs` does steps 1–5 and step 9 of the checklist below. It
+exists because the version is written down in five places and the git commands
+are easy to mistype.
+
+| Command                                              | What it does                                                                                             |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `bun run release [patch\|minor\|major\|x.y.z]`       | Bumps the version everywhere, adds the changelog heading, commits `release: X.Y.Z`, tags `vX.Y.Z`, pushes both, creates the GitHub release. Defaults to `patch`. |
+| `bun run build`                                      | Runs `vsce package` and writes `creel-<version>.vsix`, reading the version from `package.json` — so it always builds *that* tag. |
+| `bun run attach`                                     | Uploads `creel-<version>.vsix` onto the GitHub release.                                                  |
+| `bun run bump [spec]`                                | Stops after the file edits and the local commit and tag. Nothing is pushed — for when you want to look first. |
+
+Every command takes `--dry-run`, which prints what would change and touches
+nothing. `--strict` makes `release` abort instead of warning when the tree is
+dirty.
+
+A whole release:
+
+```bash
+bun run release        # 0.2.1 → 0.2.2, tag v0.2.2, push, GitHub release
+# fill in the CHANGELOG.md section it just created
+bun run build          # creel-0.2.2.vsix
+bun run attach         # put it on the GitHub release
+# then upload creel-0.2.2.vsix to the Marketplace by hand — checklist steps 6–8
+```
+
+**Fill in the changelog first.** The script inserts `## <version>` carrying an
+HTML comment placeholder, which renders as nothing — so an unfilled entry would
+ship as a blank section. If the placeholder is still there when `release` runs,
+it falls back to `gh --generate-notes` instead of publishing an empty note.
+
+**What it edits, and what it deliberately does not.**
+
+| File                 | Change                                                                                  |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `package.json`       | `"version"`                                                                             |
+| `README.md`, `generate.js` | the `~/.vscode/extensions/michael-obele.creel-<version>/` path, which is stale otherwise |
+| `PUBLISHING.md`      | the commands and artifact name used as examples                                          |
+| `CHANGELOG.md`       | a new `## <version>` heading                                                             |
+
+Historical prose is left alone on purpose. Sentences about what 0.2.0 and 0.2.1
+*were* stay exactly as written, so this file keeps telling the truth about past
+releases instead of being rewritten with each one.
+
+**Safety.** Only the files in that table are staged, so unrelated unfinished
+work is never swept into a release commit by accident. A rule that matches
+nothing is reported at the end — that is the signal the docs have drifted and a
+reader would be following a stale command. If `git push` fails, the commit and
+the tag still exist locally and the script prints the two commands needed to
+finish; nothing is rolled back.
+
+**Order matters: `release` before `build`.** The tag is what the build is *of*,
+so the version exists on GitHub before the artifact does, and the manual
+Marketplace upload then carries a version that is already published elsewhere.
+
+## Release checklist
+
+Run these in order, from the repository root.
+
+1. **Pick the version.** Patch for docs and fixes, minor for behaviour. Never reuse one; see **Version numbers cannot be reused**.
+2. **Bump `package.json`.** Edit `"version"` by hand. Avoid `npm version`, which commits and tags before you have tested the build.
+3. **Write the changelog entry.** Newest first in `CHANGELOG.md`, under a `## <version>` heading.
+4. **Build it.** `npx --yes @vscode/vsce package`
+5. **Commit, tag, push.**
+
+   ```bash
+   git add -A
+   git commit -m "release: 0.2.1"
+   git tag v0.2.1
+   git push origin main --tags
+   ```
+
+6. **Run the pre-upload checks.** Confirms the tree is clean, the tag on `HEAD` matches the version in `package.json`, and the tool list inside the package is empty.
+7. **Upload the `.vsix`** to the Marketplace.
+8. **Confirm** the new version is live, then install it from the Marketplace on a different machine.
+9. **Cut the GitHub Release** with the `.vsix` attached.
+
+## Version numbers cannot be reused
+
+This is the mistake to avoid, and it has already bitten Creel once. Version 0.2.0 went to the Marketplace carrying the old README. The rewritten README came after, so 0.2.0 could never carry it, and 0.2.1 exists purely to publish a docs change.
+
+The Marketplace freezes a version's content at publish time, README and changelog included.
+
+- A version can be published **once**. Re-uploading it fails with `The extension 'creel' already exists in the Marketplace`.
+- You cannot edit the README of a live version. The only fix is a new version.
+- You cannot delete the latest version, and a version number you delete can never be reused.
+
+So the version is the one thing that has to be right before you upload. Bump it whenever anything user-visible changes, including docs.
+
+Three places carry the version. Keep them equal:
+
+| Carrier                    | Where                                                             |
+| -------------------------- | ----------------------------------------------------------------- |
+| `package.json` → `version` | What the Marketplace records, and what names the installed folder |
+| Git tag                    | `v0.2.1`                                                          |
+| GitHub Release             | Same tag, same `.vsix` asset                                      |
+
+A git tag that disagrees with `package.json` is the error worth guarding against, because it produces a GitHub Release that does not match what the Marketplace actually serves.
 
 ## What you need to get
 
-| Thing                     | Where it comes from                                                | Cost          | Needed for                |
-| ------------------------- | ------------------------------------------------------------------ | ------------- | ------------------------- |
-| A Microsoft account       | You probably have one. Decide now which account owns the extension | Free          | Everything                |
-| Publisher ID              | You invent it on the Marketplace site: `michael-obele`             | Free          | Everything                |
-| `creel-0.2.1.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading                 |
-| Azure DevOps organization | https://dev.azure.com, if you have never signed in                 | Free, no card | Only for token publishing |
-| Personal access token     | Azure DevOps → Personal access tokens                              | Free          | Only for token publishing |
+| Thing                     | Where it comes from                                                | Cost          | Needed for   |
+| ------------------------- | ------------------------------------------------------------------ | ------------- | ------------ |
+| A Microsoft account       | You probably have one. Decide now which account owns the extension | Free          | Everything   |
+| Publisher ID              | You invent it on the Marketplace site: `michael-obele`             | Free          | Everything   |
+| `creel-0.2.1.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading    |
+| Azure DevOps organization | https://dev.azure.com, if you have never signed in                 | Free, no card | **Not used** |
+| Personal access token     | Azure DevOps → Personal access tokens                              | Free          | **Not used** |
 
-Only the first three are on the fast path. Choose the Microsoft account carefully, because the publisher ID is permanent.
+Only the first three are needed, and all three are already done. The last two rows are marked **Not used** because Creel is released by hand, so no Azure DevOps organization and no token exist. Choose the Microsoft account carefully if you ever revisit this, because the publisher ID is permanent.
 
-## Fast path: upload the VSIX
+## One-time setup: the publisher (already done)
 
-Four steps, no tokens, nothing to expire.
+Creel went live on 4 October 2026, so the publisher and the listing both exist. This section records what was chosen, kept because a few of these choices are hard to undo. Nothing here is part of a normal release.
 
-### 1. Create the publisher
+### What was entered
 
 Go to [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) and sign in with the Microsoft account that should own Creel. That can be personal or work, and it does not need to match your GitHub account.
 
@@ -80,27 +180,27 @@ Two decisions here are hard to undo:
 - **The publisher `Name` is what users see**, and changing it later revokes a verified badge. For a personal publisher, `Michael Obele` is the honest form, and plenty of prominent extension publishers are individuals rather than brands. The `ID` stays `michael-obele` regardless, because that is what `package.json` publishes under.
 - **The Logo is the publisher's logo, not Creel's.** It sits beside every extension you ever publish, so if you expect more than Creel, a personal mark beats the basket. `icon.png` is fine to start with, and it is a PNG, which is the safe format for a logo upload.
 
-### 2. Build the package
+## Build the package
 
-From the repository root:
+From the repository root, after the version bump is committed:
 
 ```bash
 npx --yes @vscode/vsce package
 ```
 
-That writes `creel-0.2.1.vsix` — 9 files, about 28 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
+That writes `creel-0.2.1.vsix`: 9 files, a little under 30 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
 
-### 3. Upload it
+## Upload the new version
 
-Back on the [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) page, with your publisher selected:
+On the [Manage Publishers & Extensions](https://marketplace.visualstudio.com/manage) page, with the `michael-obele` publisher selected:
 
-1. Select **New extension**, then **Visual Studio Code**.
-2. Drag `creel-0.2.1.vsix` onto the page, or browse for it.
+1. Select the **Creel** extension. On the very first release this was **New extension**, then **Visual Studio Code**; after that it is already in the list.
+2. Find the version upload control and drop `creel-<version>.vsix` onto it, or browse for the file.
 3. Confirm the upload.
 
-For a later release, the same page takes a new `.vsix` for the extension you already have, so you never repeat the setup above.
+Check the filename against the version `vsce` printed while packaging. The Marketplace takes whichever version is inside the file, and the filename is the only thing telling you which one that is.
 
-### 4. Check it went live
+## Confirm it went live
 
 The listing appears at:
 
@@ -108,7 +208,7 @@ The listing appears at:
 https://marketplace.visualstudio.com/items?itemName=michael-obele.creel
 ```
 
-New listings can take a few minutes. Then confirm a real install works, on a machine that is not this one:
+Updates usually take a few minutes. Then confirm a real install works, on a machine that is not this one:
 
 ```bash
 code --install-extension michael-obele.creel
@@ -130,15 +230,22 @@ When Creel has been on the Marketplace for six months, open your publisher's **D
 
 One trap worth knowing now: **changing your publisher display name later revokes the badge.** Pick the **Name** you want to keep.
 
-## Run these checks before you upload
+## Pre-upload checks
 
-Three commands, from the repository root.
+Run these from the repository root, after the commit and tag in step 5 and before the upload.
 
 ```bash
 git status --short
 ```
 
-Expect no output. If `package.json` shows as modified, you have run `generate.js` inside the repo. Put it back with `node generate.js --reset` before publishing.
+Expect no output. A modified `package.json` here means one of two things: the version bump is still uncommitted, or you ran `generate.js` inside the repo by mistake. Commit the bump, or clear a stray skill list with `node generate.js --reset`.
+
+```bash
+git describe --tags --exact-match 2>/dev/null || echo "no tag on HEAD"
+node -p "require('./package.json').version"
+```
+
+The two lines above must agree. If they do not, tag the commit you are about to publish, or fix the version, before going any further. This is the check that stops a GitHub Release from disagreeing with what the Marketplace serves.
 
 ```bash
 node -e "console.log('tools in manifest:', require('./package.json').contributes.languageModelTools.length)"
@@ -152,13 +259,28 @@ npx --yes @vscode/vsce package
 
 Read the file list it prints. It should be exactly nine files, and `icon.png` must be in there.
 
-## If you use tokens instead: PATs expire on 1 December 2026
+## Publish the GitHub Release
 
-The Marketplace runs on Azure DevOps. Today you authenticate with a Personal Access Token. Microsoft's own docs say:
+Step 5 pushes the tag, but a tag is not a Release. Attach the package so a `.vsix` is downloadable without going through the Marketplace:
+
+```bash
+gh release create v0.2.1 creel-0.2.1.vsix \
+  --repo Michael-Obele/creel \
+  --title "v0.2.1" \
+  --notes "README rewritten as a landing page. No behaviour change. See CHANGELOG.md."
+```
+
+`.gitignore` lists `*.vsix`, so the package is never committed. The Release asset is where it lives.
+
+## Escape hatch: token and CI publishing
+
+Not needed for a manual release. Kept for the day hand-uploading gets tiresome, or you want a pipeline to publish for you. If that day comes, go straight to Entra ID in **Why there is no CI workflow** rather than a token, since a token would only work until 1 December 2026.
+
+The Marketplace runs on Azure DevOps, and a Personal Access Token is the older way to authenticate. Microsoft's own docs say:
 
 > "On December 1, 2026, global Personal Access Tokens (PATs) in Azure DevOps are retired. To keep publishing extensions, use secure automated publishing with Microsoft Entra ID instead of PATs."
 
-That is about eight weeks from today, which is the main reason the fast path above avoids tokens entirely. Set up a token when uploading by hand gets tiresome, or when you want CI to publish for you.
+That is about eight weeks from today. It does not affect a manual upload, which is why Creel stays manual; it only matters if you automate.
 
 ### 1. Create an Azure DevOps organization
 
@@ -198,24 +320,32 @@ Because `package.json` already holds the version you want, this does not create 
 
 ## Reference: what is already in place
 
-| Item                              | State                                                                                                           |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Public repo                       | https://github.com/Michael-Obele/creel                                                                          |
-| `publisher` field                 | `michael-obele`, already set in `package.json`                                                                  |
-| Publisher ID free?                | No longer free. `michael-obele` owns the live Creel listing, so treat it as permanent                           |
-| Existing extension named `creel`? | Yes. Live at `michael-obele.creel` since 4 October 2026, first version 0.2.0                                    |
-| Open web                          | Clean. Results for "creel" are dictionary and Wikipedia entries for the word, so page one is winnable           |
-| `LICENSE`                         | MIT, present                                                                                                    |
-| `README.md`                       | Present, and the Marketplace renders it                                                                         |
-| `CHANGELOG.md`                    | Present                                                                                                         |
-| `icon.png`                        | 256x256, declared as `icon` in `package.json`. Regenerate with `python3 scripts/make-icon.py`                   |
-| `.vscodeignore`                   | Excludes `.git`, `.fallow`, `install.sh`, `scripts`, `skills.json`, `PUBLISHING.md` and `*.vsix`                |
-| Packaging                         | Verified with `vsce` 4.0.0. `npx --yes @vscode/vsce package` produces a 9-file, 27.9 KB VSIX                    |
-| `@vscode/vsce`                    | Not installed globally. `npx --yes @vscode/vsce` resolves 4.0.0 on its own                                      |
+| Item                              | State                                                                                                     |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Public repo                       | https://github.com/Michael-Obele/creel                                                                    |
+| `publisher` field                 | `michael-obele`, already set in `package.json`                                                            |
+| Publisher ID free?                | No longer free. `michael-obele` owns the live Creel listing, so treat it as permanent                     |
+| Existing extension named `creel`? | Yes. Live at `michael-obele.creel` since 4 October 2026, first version 0.2.0                              |
+| Open web                          | Clean. Results for "creel" are dictionary and Wikipedia entries for the word, so page one is winnable     |
+| `LICENSE`                         | MIT, present                                                                                              |
+| `README.md`                       | Present, and the Marketplace renders it                                                                   |
+| `CHANGELOG.md`                    | Present                                                                                                   |
+| `icon.png`                        | 256x256, declared as `icon` in `package.json`. Regenerate with `python3 scripts/make-icon.py`             |
+| `.vscodeignore`                   | Excludes `.git`, `.fallow`, `install.sh`, `scripts`, `skills.json`, `PUBLISHING.md` and `*.vsix`          |
+| Packaging                         | Verified with `vsce` 4.0.0. `npx --yes @vscode/vsce package` produces a 9-file VSIX, a little under 30 KB |
+| Release method                    | Manual upload, by choice. No CI workflow and no token; see **Why there is no CI workflow**                |
+| Versions published                | `0.2.1`, live since 4 October 2026. Supersedes `0.2.0`, which carried the pre-rewrite README              |
+| `@vscode/vsce`                    | Not installed globally. `npx --yes @vscode/vsce` resolves 4.0.0 on its own                                |
 
-## Skip the Entra ID path
+## Why there is no CI workflow
 
-Microsoft recommends Entra ID with workload identity federation instead of tokens, and for a solo extension it is not worth it. What it takes:
+Creel is released by hand. Nothing publishes on a tag, and there is no `.github/workflows` directory. That is a decision rather than an oversight:
+
+- A hand upload needs no credential at all, so it is the one path untouched by the 1 December 2026 PAT retirement.
+- The documented GitHub Actions recipe publishes with a PAT in a `VSCE_PAT` secret. Building it now would produce a workflow with a working life measured in weeks.
+- Entra ID with workload identity federation is the supported replacement, and it is a real afternoon of Azure setup. Worth it for a pipeline that runs daily, not for an extension released a few times a year.
+
+If you ever do want automation, this is what Entra ID takes. Microsoft recommends it over tokens:
 
 1. An Azure DevOps service connection using workload identity federation.
 2. A user-assigned managed identity in Azure, with the Reader role.
@@ -244,13 +374,20 @@ Excluded: `.git`, `.github`, `.vscode`, `.fallow`, `install.sh`, `scripts`, `ski
 
 ## Optional polish before you publish
 
-Three fields worth considering in `package.json`:
+Three optional `package.json` fields. **All three are already in place**, so
+this is reference rather than a step:
 
 ```jsonc
 "pricing": "Free",                        // adds a "Free" label; the default value is Free anyway
 "galleryBanner": { "color": "#22272e" },  // banner behind the listing header
 "sponsor": { "url": "https://github.com/sponsors/Michael-Obele" }
 ```
+
+`galleryBanner` also takes `"theme": "dark"` or `"light"`, which tells the
+Marketplace how to contrast the header text; `#22272e` is a dark banner, so add
+it if the header text ever looks wrong. All three are read by the Marketplace
+gallery, not by VS Code, so `vsce package` accepts them without complaint and
+nothing in the extension behaves differently.
 
 ## Two things to expect
 
@@ -269,7 +406,6 @@ Three fields worth considering in `package.json`:
 
 ## Afterwards
 
-- Bump `version` in `package.json` and rename the installed folder to match, since VS Code puts the version in the folder name.
+- Bump `version` in `package.json` and rename the installed folder to match, since VS Code puts the version in the folder name. Two Creel folders at once register the same tool ids and collide, so delete the old one.
 - Add a `CHANGELOG.md` entry for each release.
-- Update the README install section — it currently says "From the Marketplace, once published".
 - Publish to [Open VSX](https://open-vsx.org) too, with `npx ovsx publish`, so VSCodium and other non-Microsoft builds can install Creel. Open VSX needs its own token from https://open-vsx.org/user-settings/tokens, and it has no retirement deadline.
