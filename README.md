@@ -68,7 +68,7 @@ Installed from a packaged `.vsix`? The tool list starts empty on purpose. Run **
 | Attach several              | Keep adding them. Only exact duplicates are collapsed                         |
 | Attach mid-message          | Yes. References sit wherever you put them                                     |
 | Re-scan after adding skills | **Creel: Scan skills**, then reload                                           |
-| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.2.1/generate.js`             |
+| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.3.0/generate.js`             |
 
 ## Where it comes from
 
@@ -146,7 +146,7 @@ The committed `package.json` ships `"languageModelTools": []` on purpose, so no 
 $ node generate.js
 Creel: refusing to write a skill list into the repo.
 Run the generator in the installed copy instead:
-  node ~/.vscode/extensions/michael-obele.creel-0.2.1/generate.js
+  node ~/.vscode/extensions/michael-obele.creel-0.3.0/generate.js
 Pass --force only if you really mean to commit a skill list.
 ```
 
