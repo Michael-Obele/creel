@@ -12,12 +12,12 @@ Everything below the checklist is reference.
 exists because the version is written down in five places and the git commands
 are easy to mistype.
 
-| Command                                              | What it does                                                                                             |
-| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `bun run release [patch\|minor\|major\|x.y.z]`       | Bumps the version everywhere, adds the changelog heading, commits `release: X.Y.Z`, tags `vX.Y.Z`, pushes both, creates the GitHub release. Defaults to `patch`. |
-| `bun run build`                                      | Runs `vsce package` and writes `creel-<version>.vsix`, reading the version from `package.json` — so it always builds *that* tag. |
-| `bun run attach`                                     | Uploads `creel-<version>.vsix` onto the GitHub release.                                                  |
-| `bun run bump [spec]`                                | Stops after the file edits and the local commit and tag. Nothing is pushed — for when you want to look first. |
+| Command                                        | What it does                                                                                                                                                     |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run release [patch\|minor\|major\|x.y.z]` | Bumps the version everywhere, adds the changelog heading, commits `release: X.Y.Z`, tags `vX.Y.Z`, pushes both, creates the GitHub release. Defaults to `patch`. |
+| `bun run build`                                | Runs `vsce package` and writes `creel-<version>.vsix`, reading the version from `package.json` — so it always builds _that_ tag.                                 |
+| `bun run attach`                               | Uploads `creel-<version>.vsix` onto the GitHub release.                                                                                                          |
+| `bun run bump [spec]`                          | Stops after the file edits and the local commit and tag. Nothing is pushed — for when you want to look first.                                                    |
 
 Every command takes `--dry-run`, which prints what would change and touches
 nothing. `--strict` makes `release` abort instead of warning when the tree is
@@ -40,15 +40,15 @@ it falls back to `gh --generate-notes` instead of publishing an empty note.
 
 **What it edits, and what it deliberately does not.**
 
-| File                 | Change                                                                                  |
-| -------------------- | --------------------------------------------------------------------------------------- |
-| `package.json`       | `"version"`                                                                             |
+| File                       | Change                                                                                   |
+| -------------------------- | ---------------------------------------------------------------------------------------- |
+| `package.json`             | `"version"`                                                                              |
 | `README.md`, `generate.js` | the `~/.vscode/extensions/michael-obele.creel-<version>/` path, which is stale otherwise |
-| `PUBLISHING.md`      | the commands and artifact name used as examples                                          |
-| `CHANGELOG.md`       | a new `## <version>` heading                                                             |
+| `PUBLISHING.md`            | the commands and artifact name used as examples                                          |
+| `CHANGELOG.md`             | a new `## <version>` heading                                                             |
 
 Historical prose is left alone on purpose. Sentences about what 0.2.0 and 0.2.1
-*were* stay exactly as written, so this file keeps telling the truth about past
+_were_ stay exactly as written, so this file keeps telling the truth about past
 releases instead of being rewritten with each one.
 
 **Safety.** Only the files in that table are staged, so unrelated unfinished
@@ -58,7 +58,7 @@ reader would be following a stale command. If `git push` fails, the commit and
 the tag still exist locally and the script prints the two commands needed to
 finish; nothing is rolled back.
 
-**Order matters: `release` before `build`.** The tag is what the build is *of*,
+**Order matters: `release` before `build`.** The tag is what the build is _of_,
 so the version exists on GitHub before the artifact does, and the manual
 Marketplace upload then carries a version that is already published elsewhere.
 

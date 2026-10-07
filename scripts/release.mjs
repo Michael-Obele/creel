@@ -444,7 +444,8 @@ function cmdNotes(spec) {
   }
   const file = path.join(root, "CHANGELOG.md");
   const hasHeading =
-    fs.existsSync(file) && fs.readFileSync(file, "utf8").includes(`## ${version}`);
+    fs.existsSync(file) &&
+    fs.readFileSync(file, "utf8").includes(`## ${version}`);
   console.log(
     hasHeading
       ? `(CHANGELOG has ## ${version} but only the placeholder, so gh would generate notes)`
