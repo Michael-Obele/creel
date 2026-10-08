@@ -10,7 +10,7 @@
 const vscode = require("vscode");
 const fs = require("node:fs");
 const path = require("node:path");
-const { apply } = require("./generate");
+const { apply, LOADER_NAME } = require("./generate");
 const {
   analyze,
   parseTranscript,
@@ -290,6 +290,103 @@ function renderNative(skill) {
   return parts.join("\n");
 }
 
+/**
+ * Find a skill from free text: the tool id, a `#` reference, the skill's own
+ * name, or its folder name. Everything the model might reasonably pass works,
+ * because a failed lookup costs a round trip and the only name the model has
+ * is the one VS Code printed in its `<skills>` block.
+ *
+ * @param {Record<string, {name?: string, reference?: string, path?: string}>} skills
+ * @param {unknown} input
+ * @returns {{id: string, skill: object}|null}
+ */
+function resolveSkill(skills, input) {
+  const raw = typeof input === "string" ? input.trim() : "";
+  if (!raw) return null;
+  const want = raw.replace(/^#/, "").toLowerCase();
+  const entries = Object.entries(skills || {});
+
+  for (const [id, skill] of entries) {
+    if (id.toLowerCase() === want) return { id, skill };
+  }
+  for (const [id, skill] of entries) {
+    const ref = (skill.reference || "").toLowerCase();
+    const name = (skill.name || "").toLowerCase();
+    const folder = path.basename(path.dirname(skill.path || "")).toLowerCase();
+    if (ref === want || name === want || folder === want) return { id, skill };
+  }
+  return null;
+}
+
+/** Every distinct skill name, sorted — the recovery list on a failed lookup. */
+function availableNames(skills) {
+  return [
+    ...new Set(
+      Object.values(skills || {})
+        .map((skill) => skill.name)
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Register the autonomous loader — the one creel tool the model can call
+ * without a `#` first.
+ *
+ * It reads skills.json on every call rather than closing over the scan result,
+ * so a rescan is usable immediately instead of after the reload that the
+ * manifest change would otherwise demand. Registration itself is wrapped: a
+ * manifest written before the loader existed must not stop the extension
+ * activating, because everything else creel does still works.
+ *
+ * @param {vscode.ExtensionContext} context
+ * @param {string} extensionDir
+ */
+function registerLoader(context, extensionDir) {
+  try {
+    context.subscriptions.push(
+      vscode.lm.registerTool(LOADER_NAME, {
+        /**
+         * @param {vscode.LanguageModelToolInvocationOptions<{skill?: string}>} options
+         * @returns {Promise<vscode.LanguageModelToolResult>}
+         */
+        async invoke(options) {
+          const skills = loadSkills(extensionDir);
+          const input = options && options.input ? options.input.skill : undefined;
+          const found = resolveSkill(skills, input);
+          if (!found) {
+            const names = availableNames(skills);
+            // Throwing makes the call FAILED in the audit rather than a HIT that
+            // delivered nothing, and hands the model the list it needs to retry.
+            throw new Error(
+              names.length
+                ? `No skill matches ${JSON.stringify(String(input ?? ""))}. Available: ${names.join(", ")}`
+                : "No skills have been scanned yet. Run Creel: Scan skills.",
+            );
+          }
+
+          const variant = currentVariant();
+          const text = renderSkill(found.skill, variant);
+          recordInjection({
+            tool: LOADER_NAME,
+            reference: found.skill.reference || "",
+            variant,
+            text,
+          });
+          return new vscode.LanguageModelToolResult([
+            new vscode.LanguageModelTextPart(text),
+          ]);
+        },
+      }),
+    );
+  } catch (error) {
+    const log = ensureOutput();
+    if (log) {
+      log.appendLine(`Creel: could not register ${LOADER_NAME} — ${error.message}`);
+    }
+  }
+}
+
 /** Tool id -> skill record. Absent before the first scan, hence the guard. */
 function loadSkills(extensionDir) {
   try {
@@ -498,6 +595,8 @@ function activate(context) {
     );
   }
 
+  registerLoader(context, extensionDir);
+
   context.subscriptions.push(
     vscode.commands.registerCommand("creel.generate", async () => {
       // In a development host `extensionDir` IS the repo, and `apply` has no
@@ -696,7 +795,10 @@ function activate(context) {
     }),
   );
 
-  if (!tools.length) {
+  // The loader is a tool even when no skill was ever scanned, so counting it
+  // here would hide the prompt that tells the user to scan.
+  const skillTools = tools.filter((tool) => tool.name !== LOADER_NAME);
+  if (!skillTools.length) {
     vscode.window
       .showInformationMessage(
         'Creel: no skills registered yet. Run "Creel: Scan skills" to build the # list.',
@@ -812,5 +914,6 @@ module.exports = {
   // Exposed for the wrapper-shape assertions the design doc asks for.
   renderSkill,
   listRelatedFiles,
+  resolveSkill,
   VARIANTS,
 };
