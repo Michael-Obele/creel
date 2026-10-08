@@ -558,6 +558,185 @@ function latestTurn(report) {
   return null;
 }
 
+/**
+ * Attribute each injection record to the message that caused it.
+ *
+ * This is the join the audit was missing. The transcript knows which route a
+ * skill took; `injections.jsonl` knows which wrapper shape it arrived in; until
+ * now nothing put the two together, so "did `must-keep` actually get followed?"
+ * had no answer.
+ *
+ * A turn runs from its own `at` to the next turn in the same session, matching
+ * how `analyze` builds them. A row that falls outside every window is reported
+ * rather than dropped — it usually means the injection happened in another
+ * window while this one's transcript was being read, and silently losing it
+ * would understate the call count.
+ *
+ * A record with no matching reference in its turn is `AUTONOMOUS`: creel
+ * rendered a payload the user never attached with `#`, which is to say the
+ * model fetched the skill itself. That is a success, not a miss, so it never
+ * lands in the miss counters.
+ *
+ * Pure: no clock, no disk, no `vscode`.
+ *
+ * @param {{turns: Array<object>}|null} report from `analyze`
+ * @param {Array<{at: string, tool: string, reference: string, variant: string, chars: number}>} [injections]
+ * @returns {{joined: Array<object>, unjoined: Array<object>, byVariant: Record<string, object>}}
+ */
+function joinInjections(report, injections) {
+  const turns = (report && report.turns) || [];
+
+  // Index turns into half-open windows [start, end), scoped per session so a
+  // second workspace's history cannot absorb this one's records.
+  const windows = [];
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    if (!turn.at) {
+      continue;
+    }
+    let end = null;
+    for (let j = i + 1; j < turns.length; j++) {
+      if (turns[j].session === turn.session) {
+        end = turns[j].at;
+        break;
+      }
+    }
+    windows.push({ turn, start: turn.at, end });
+  }
+
+  const joined = [];
+  const unjoined = [];
+
+  for (const record of injections || []) {
+    if (!record || typeof record.at !== "string") {
+      unjoined.push(record);
+      continue;
+    }
+    const window = windows.find(
+      (candidate) =>
+        record.at >= candidate.start &&
+        (candidate.end === null || record.at < candidate.end),
+    );
+    if (!window) {
+      unjoined.push(record);
+      continue;
+    }
+    const ref = window.turn.refs.find((r) => r.token === record.reference);
+    joined.push({
+      ...record,
+      session: window.turn.session,
+      verdict: ref ? ref.verdict : "AUTONOMOUS",
+      detail: ref ? ref.detail : "loaded without a # reference in this message",
+      route: ref ? "forced" : "autonomous",
+    });
+  }
+
+  const byVariant = {};
+  for (const row of joined) {
+    const key = row.variant || "baseline";
+    const bucket =
+      byVariant[key] ||
+      (byVariant[key] = {
+        calls: 0,
+        chars: 0,
+        forced: 0,
+        autonomous: 0,
+        verdicts: {},
+      });
+    bucket.calls++;
+    bucket.chars += row.chars || 0;
+    bucket[row.route]++;
+    bucket.verdicts[row.verdict] = (bucket.verdicts[row.verdict] || 0) + 1;
+  }
+
+  return { joined, unjoined, byVariant };
+}
+
+/**
+ * The telemetry report, as markdown, for an untitled editor.
+ * Pure — the clock and the skill list arrive in `meta` rather than being read
+ * here, which is what keeps this file runnable as `node audit.js`.
+ *
+ * @param {{joined: Array<object>, unjoined: Array<object>, byVariant: Record<string, object>}} joined
+ *   the result of `joinInjections`
+ * @param {{now: string, source?: string, blocked?: string[]}} meta
+ * @returns {string}
+ */
+function telemetryMarkdown(joined, meta) {
+  const byVariant = (joined && joined.byVariant) || {};
+  const rows = (joined && joined.joined) || [];
+  const strays = (joined && joined.unjoined) || [];
+
+  const lines = [
+    "# Creel telemetry",
+    "",
+    `Read at ${meta.now}.`,
+    meta.source ? `Source: \`${meta.source}\`` : "",
+    "",
+    "Each row is one tool call creel actually rendered. `Forced` came from a `#`",
+    "reference in the user's message; `Autonomous` is the model deciding on its own",
+    "that a skill applied. A variant that never appears below has never shipped a",
+    "payload, which is the point of running this.",
+    "",
+    "## By wrapper variant",
+    "",
+    "| Variant | Calls | Forced | Autonomous | Mean chars | Verdicts |",
+    "| --- | --- | --- | --- | --- | --- |",
+  ];
+
+  const variants = Object.keys(byVariant).sort();
+  if (!variants.length) {
+    lines.push("| — | 0 | 0 | 0 | — | — |");
+  }
+  for (const key of variants) {
+    const bucket = byVariant[key];
+    const mean = bucket.calls ? Math.round(bucket.chars / bucket.calls) : 0;
+    const verdicts = Object.entries(bucket.verdicts || {})
+      .map(([name, count]) => `${name} ${count}`)
+      .join(", ");
+    lines.push(
+      `| \`${key}\` | ${bucket.calls} | ${bucket.forced} | ${bucket.autonomous} | ${mean} | ${verdicts} |`,
+    );
+  }
+
+  lines.push("", "## Largest payloads", "");
+  const largest = [...rows].sort((a, b) => (b.chars || 0) - (a.chars || 0)).slice(0, 5);
+  if (largest.length) {
+    lines.push("| Chars | Skill | Variant | Route |", "| --- | --- | --- | --- |");
+    for (const row of largest) {
+      lines.push(
+        `| ${row.chars} | \`${row.reference || row.tool}\` | ${row.variant} | ${row.route} |`,
+      );
+    }
+  } else {
+    lines.push("No injections recorded.");
+  }
+
+  if (strays.length) {
+    lines.push(
+      "",
+      `## Unjoined (${strays.length})`,
+      "",
+      "Injections with no matching message in this workspace — usually recorded in",
+      "another window, or before this transcript started. Counted nowhere above, so",
+      "the rates are not inflated by them.",
+      "",
+    );
+  }
+
+  lines.push("## Skills the built-in loader refuses", "");
+  const blocked = (meta.blocked || []).slice().sort((a, b) => a.localeCompare(b));
+  lines.push(
+    blocked.length
+      ? `${blocked.length} skill(s) carry \`disable-model-invocation: true\`, so VS Code's own loader answers "Skill not found". \`creel_loadSkill\` and \`#\` both still work:\n\n` +
+          blocked.map((name) => `- \`${name}\``).join("\n")
+      : "None — every scanned skill is loadable by the built-in loader.",
+    "",
+  );
+
+  return lines.join("\n");
+}
+
 /** Percentages read badly as `0.5`; the notification and report both want `50%`. */
 function percent(rate) {
   return rate === null || rate === undefined
@@ -676,6 +855,8 @@ module.exports = {
   parseTranscript,
   analyze,
   latestTurn,
+  joinInjections,
+  telemetryMarkdown,
   percent,
   toMarkdown,
 };

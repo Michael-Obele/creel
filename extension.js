@@ -16,6 +16,8 @@ const {
   parseTranscript,
   latestTurn,
   toMarkdown,
+  joinInjections,
+  telemetryMarkdown,
   knownRefsFromSkills,
 } = require("./audit");
 
@@ -725,6 +727,31 @@ function activate(context) {
       });
       await vscode.window.showTextDocument(document, { preview: false });
     }),
+
+    vscode.commands.registerCommand("creel.telemetry", async () => {
+      const result = readAudit(context, extensionDir);
+      if (result.error) {
+        vscode.window.showWarningMessage(`Creel: ${result.error}`);
+        return;
+      }
+      const blocked = Object.values(loadSkills(extensionDir))
+        .filter((skill) => skill.blocked)
+        .map((skill) => skill.name)
+        .filter(Boolean);
+      const content = telemetryMarkdown(
+        joinInjections(result.report, readInjectionLog(context)),
+        {
+          now: new Date().toISOString(),
+          source: result.source,
+          blocked,
+        },
+      );
+      const document = await vscode.workspace.openTextDocument({
+        content,
+        language: "markdown",
+      });
+      await vscode.window.showTextDocument(document, { preview: false });
+    }),
   );
 
   context.subscriptions.push(
@@ -828,6 +855,43 @@ function transcriptDir(context) {
     "GitHub.copilot-chat",
     "transcripts",
   );
+}
+
+/**
+ * The injection log, oldest first — the file `persistInjection` appends to.
+ * A log that is missing, empty, or torn mid-write is an empty list rather than
+ * an error: telemetry with no data is a report saying so, not a failure.
+ *
+ * @param {vscode.ExtensionContext} context
+ * @returns {Array<{at: string, tool: string, reference: string, variant: string, chars: number}>}
+ */
+function readInjectionLog(context) {
+  if (!injectionLogPath) {
+    if (context.globalStorageUri && context.globalStorageUri.fsPath) {
+      injectionLogPath = path.join(
+        context.globalStorageUri.fsPath,
+        "injections.jsonl",
+      );
+    } else {
+      return [];
+    }
+  }
+  try {
+    return fs
+      .readFileSync(injectionLogPath, "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => {
+        try {
+          return JSON.parse(line);
+        } catch {
+          return null;
+        }
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 /**

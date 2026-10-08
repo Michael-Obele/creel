@@ -77,6 +77,12 @@
         "title": "Preview wrapper",
         "category": "Creel",
         "shortTitle": "Preview wrapper"
+      },
+      {
+        "command": "creel.telemetry",
+        "title": "Telemetry",
+        "category": "Creel",
+        "shortTitle": "Telemetry"
       }
     ],
     "menus": {
