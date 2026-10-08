@@ -80,6 +80,17 @@ function readFrontmatter(file) {
       out[key] = m[1].trim().replace(/^['"]|['"]$/g, "");
     }
   }
+  // VS Code's own loader reads this flag and answers "Skill not found". Creel
+  // cannot lift the block — and mimicking native means keeping the frontmatter
+  // as-is — so it records the flag and telemetry reports the list. The skill
+  // stays reachable through creel_loadSkill and through #.
+  const blocked = /^disable-model-invocation:\s*(.+)$/m.exec(match[1]);
+  if (
+    blocked &&
+    /^(true|yes|1)$/i.test(blocked[1].trim().replace(/^['"]|['"]$/g, ""))
+  ) {
+    out.blocked = true;
+  }
   return out;
 }
 
@@ -203,10 +214,58 @@ function buildEntries(skills, prefix, variant = "baseline") {
       name: title,
       description: summary,
       reference: ref,
+      ...(meta.blocked ? { blocked: true } : {}),
     };
   }
 
   return { tools, paths, skipped };
+}
+
+/** The one creel tool the model may call without a `#`. */
+const LOADER_NAME = "creel_loadSkill";
+
+/**
+ * The loader's manifest entry.
+ *
+ * `canBeReferencedInPrompt: false` is the whole point. A referenceable tool is
+ * an attachment: VS Code forces the call once the user types `#`, but the model
+ * never sees it before that, so it cannot decide a skill applies and fetch it.
+ * This one sits in the tool list permanently, and it is also the only route
+ * into the skills carrying `disable-model-invocation: true`.
+ *
+ * The name list is generated because the model has no other index into creel's
+ * skills — the `<skills>` block VS Code prints lists only what its own loader
+ * accepts. Names only: the description arrives in the payload, after the
+ * decision to call, where it costs nothing extra.
+ *
+ * @param {string[]} names skill names, already sorted
+ * @returns {object} a `contributes.languageModelTools` entry
+ */
+function loaderEntry(names) {
+  const list = names.join(", ");
+  return {
+    name: LOADER_NAME,
+    displayName: "Load skill",
+    userDescription: "Load one of the skills Creel has scanned.",
+    modelDescription:
+      "Load a skill's instructions by name, then follow them before continuing " +
+      'with the task. Input: {"skill": "<name>"}. The name is the skill\'s own ' +
+      "name, not its # reference." +
+      (list ? `\n\nAvailable skills: ${list}` : ""),
+    canBeReferencedInPrompt: false,
+    icon: "$(lightbulb)",
+    tags: ["skills"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        skill: {
+          type: "string",
+          description: 'The skill to load, e.g. "tdd".',
+        },
+      },
+      required: ["skill"],
+    },
+  };
 }
 
 /**
@@ -245,7 +304,16 @@ function apply(extensionDir) {
     path.join(extensionDir, "skills.json"),
     JSON.stringify(paths, null, "\t") + "\n",
   );
-  manifest.contributes.languageModelTools = tools;
+
+  // The loader is emitted only when there is something to load, so a scan that
+  // finds nothing still leaves the manifest empty — which is how the extension
+  // tells the user to scan in the first place.
+  const names = [...new Set(Object.values(paths).map((skill) => skill.name))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  manifest.contributes.languageModelTools = tools.length
+    ? [loaderEntry(names), ...tools]
+    : [];
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, "\t") + "\n");
 
   return { count: tools.length, skipped };
@@ -287,8 +355,10 @@ function reset(extensionDir) {
 
 module.exports = {
   RESERVED,
+  LOADER_NAME,
   scanSkills,
   buildEntries,
+  loaderEntry,
   apply,
   reset,
   standingDescription,
