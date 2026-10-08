@@ -66,6 +66,12 @@ const NATIVE_IGNORED_DIRS = new Set([
 /** Wrapper shapes the runtime can switch between, with no reinstall. */
 const VARIANTS = new Set(["baseline", "design-doc", "must-keep", "native"]);
 
+/** The same four shapes as a list — the pool `random` draws from. */
+const VARIANT_LIST = ["baseline", "design-doc", "must-keep", "native"];
+
+/** The shape pinned for this window when `creel.wrapperVariant` is `random`. */
+let sessionVariant = null;
+
 /** What the model was handed this session, newest first. Dev commands read it. */
 const MAX_INJECTIONS = 20;
 const injections = [];
@@ -409,12 +415,46 @@ function loadSkills(extensionDir) {
  * read at call time rather than baked in at build time.
  * ------------------------------------------------------------------------ */
 
+/**
+ * Choose this window's shape. Pure, so a test can drive the draw; the runtime
+ * passes `Math.random`.
+ *
+ * Per window rather than per call: at roughly one injection per window,
+ * per-call assignment buys no throughput and costs interleaved attribution —
+ * two shapes inside one message could not be told apart.
+ *
+ * @param {() => number} random returns a number in [0, 1)
+ * @returns {string} one of `VARIANT_LIST`
+ */
+function pickVariant(random) {
+  const draw = Number(random());
+  const index = Number.isFinite(draw)
+    ? Math.min(
+        VARIANT_LIST.length - 1,
+        Math.max(0, Math.floor(draw * VARIANT_LIST.length)),
+      )
+    : 0;
+  return VARIANT_LIST[index];
+}
+
 /** The wrapper shape for the next invocation. Read live: no reload needed. */
 function currentVariant() {
   try {
     const value = vscode.workspace
       .getConfiguration("creel")
       .get("wrapperVariant");
+    if (value === "random") {
+      if (!sessionVariant) {
+        sessionVariant = pickVariant(Math.random);
+        const log = ensureOutput();
+        if (log) {
+          log.appendLine(
+            `${new Date().toISOString()}  random -> ${sessionVariant} for this window`,
+          );
+        }
+      }
+      return sessionVariant;
+    }
     return VARIANTS.has(value) ? value : "baseline";
   } catch {
     return "baseline";
@@ -980,4 +1020,7 @@ module.exports = {
   listRelatedFiles,
   resolveSkill,
   VARIANTS,
+  VARIANT_LIST,
+  pickVariant,
+  currentVariant,
 };
