@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.4.0
+
+### The model can load a skill on its own
+
+- New `creel_loadSkill`, contributed with `canBeReferencedInPrompt: false`, so it
+  sits in the model's tool list permanently. Until now every creel tool was
+  referenceable, which means an attachment: VS Code forces the call once you type
+  `#`, but the model never saw the tool before that and could not decide a skill
+  applied and fetch it.
+- The loader's `modelDescription` carries a generated, names-only list of every
+  scanned skill — the model's only index into creel, since the `<skills>` block
+  VS Code prints lists only what its own loader accepts.
+- It is also the only route into skills whose frontmatter sets
+  `disable-model-invocation: true` (23 on this machine, including `ultrathink`,
+  `implement` and `tdd`'s neighbours). VS Code's loader honours that flag and
+  answers "Skill not found"; creel does not edit the frontmatter, it works
+  around it.
+- Unknown names throw with the full list of what is available, so the model can
+  retry — and the call is scored FAILED rather than a hit that delivered nothing.
+- Scanning now records `blocked: true` on those skills in `skills.json`.
+
+### Measuring which wrapper actually works
+
+- `creel.wrapperVariant` gains `random`: it picks one of the four shapes for the
+  whole window and stamps it into every injection. Per window rather than per
+  call, because at roughly one injection per window the latter buys no throughput
+  and costs interleaved attribution.
+- New `joinInjections` attributes each row of `injections.jsonl` to the message
+  that caused it, splitting **forced** (`#`-driven) from **autonomous** (the
+  model fetched it). A record with no matching message is reported as unjoined
+  rather than dropped, so the rates are never inflated.
+- **Creel: Telemetry** reads both halves and reports calls, route split, mean
+  payload size, the five largest payloads, unjoined rows, and the skills the
+  built-in loader refuses.
+
+### Auditing without running a command
+
+- Creel now watches this workspace's transcripts, debounced 1.5 s, and re-runs
+  the audit whenever one changes — a transcript is appended to while the turn is
+  still running, so reading it immediately would score a half-written file as a
+  miss.
+- A status-bar item shows the latest verdicts: `$(check) 3/3 skills`, or
+  `$(warning) 1/2 skills` naming the miss, or `$(discard)` when the skill
+  arrived through the built-in loader instead. It points at the audit report.
+- Notifications for a miss are throttled to one a minute, and a filesystem that
+  refuses a watcher degrades to the existing commands rather than failing
+  activation.
+
 ## 0.3.0
 
 ### Debugging what the model actually receives

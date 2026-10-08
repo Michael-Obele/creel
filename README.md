@@ -68,7 +68,7 @@ Installed from a packaged `.vsix`? The tool list starts empty on purpose. Run **
 | Attach several              | Keep adding them. Only exact duplicates are collapsed                         |
 | Attach mid-message          | Yes. References sit wherever you put them                                     |
 | Re-scan after adding skills | **Creel: Scan skills**, then reload                                           |
-| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.3.0/generate.js`             |
+| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.4.0/generate.js`             |
 
 ## Where it comes from
 
@@ -123,6 +123,27 @@ The scanner:
 - De-duplicates by real path. `~/.claude/skills/<name>` is usually a symlink to `~/.agents/skills/<name>`, and `~/.copilot/skills` often holds real copies, so one skill can otherwise show up three times.
 - Skips names already taken by built-in tools. A folder called `rename`, `todo`, `wrangler` or `skill` still works through `/name` and on-demand loading; it just does not take a `#` entry that would shadow a built-in.
 
+## Letting the model choose the skill
+
+Typing `#skill-x` **forces** the call. Creel also ships `creel_loadSkill`, one tool
+the model can call on its own:
+
+- It is contributed with `canBeReferencedInPrompt: false`, so unlike the 100-odd
+  referenceable tools it sits in the model's tool list permanently. One entry, not
+  102 — the `#` picker still lists every skill.
+- Its `modelDescription` carries a generated, names-only list of every scanned
+  skill. That list is the model's only index into creel: the `<skills>` block VS
+  Code prints lists only what its own loader accepts.
+- It is the **only** route into skills whose frontmatter sets
+  `disable-model-invocation: true` (23 on this machine, including `ultrathink` and
+  `implement`). VS Code's loader honours that flag and answers "Skill not found".
+  Creel does not edit the frontmatter — it works around it.
+
+**Creel: Telemetry** joins `injections.jsonl` against this workspace's transcripts
+and reports, per wrapper shape: calls, forced versus autonomous, mean payload size,
+the five largest payloads, and anything it could not attribute. Set
+`creel.wrapperVariant` to `random` to give the comparison something to compare.
+
 ## Settings
 
 | Setting                 | Default                                                     | Purpose                                                                                                                                                                                                     |
@@ -133,7 +154,7 @@ The scanner:
 ## Limits
 
 - A reference makes the model **call** the tool. It is not a silent paste of the file.
-- The model cannot call these skills on its own. Referenceable tools start disabled, so they never enter the model's tool list. That is the point: 100 or so skills cost the model nothing, and the `#` picker still lists all of them. Enable one in the tool picker if you want the model to reach for it unprompted.
+- The 100-odd `#` tools stay referenceable and therefore stay out of the model's tool list — that is deliberate, so they cost nothing per request. Reaching a skill without a `#` goes through `creel_loadSkill` instead: one entry, always visible.
 - Personal skills only. The manifest is static, so it cannot vary per workspace, and that leaves `.github/skills` out.
 - Everything you attach lands in context. Ten skills means ten skill bodies, so two to five is a sane range.
 - A version bump needs a folder rename, because VS Code puts the version in the extension folder name.
@@ -146,7 +167,7 @@ The committed `package.json` ships `"languageModelTools": []` on purpose, so no 
 $ node generate.js
 Creel: refusing to write a skill list into the repo.
 Run the generator in the installed copy instead:
-  node ~/.vscode/extensions/michael-obele.creel-0.3.0/generate.js
+  node ~/.vscode/extensions/michael-obele.creel-0.4.0/generate.js
 Pass --force only if you really mean to commit a skill list.
 ```
 
@@ -172,8 +193,10 @@ so changing it needs no reinstall and no reload:
 | Value                | Shape                                                                                                                               |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `baseline` (default) | What creel ships today: directive, precedence, applicability note, file listing.                                                    |
+| `must-keep`          | One directive line, the applicability note and the file listing — precedence dropped.                                                |
 | `design-doc`         | The simplified shape in [the design doc](./docs/plans/2026-10-05-prompt-simplification-design.md): one directive line and the body. |
 | `native`             | The built-in skill tool's own result, reproduced from the shipped bundle.                                                           |
+| `random`             | Picks one of the four for the whole window and stamps it into every injection — what makes a per-variant comparison possible.       |
 
 Developer mode also switches on automatically in an Extension Development Host
 (`F5`), or when a `.creel-dev` file sits in the extension folder. In a
@@ -182,7 +205,8 @@ would land in the committed `package.json`.
 
 While developer mode is on, every invocation is appended to `injections.jsonl`
 in the extension's global storage — tool, variant, size, timestamp — so a turn
-can be attributed to the variant that produced it.
+can be attributed to the variant that produced it. **Creel: Telemetry** reads
+that file back and joins it to the transcripts.
 
 Both test suites run against a stub `vscode`, so no editor is needed:
 
