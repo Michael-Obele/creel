@@ -79,6 +79,18 @@ let outputChannel = null;
 let developerMode = false;
 let injectionLogPath = null;
 
+/** The status-bar item, created on demand so a stub window never breaks. */
+let statusItem = null;
+
+/** Verdicts that mean the skill never arrived through creel at all. */
+const MISS_VERDICTS = new Set(["SKIPPED", "UNRESOLVED", "FAILED"]);
+
+/** Notify at most this often — a watcher fires several times per turn. */
+const NOTIFY_INTERVAL_MS = 60000;
+
+/** Let a transcript settle before reading it; it is appended to while running. */
+const AUDIT_DEBOUNCE_MS = 1500;
+
 /**
  * List the files that sit beside a SKILL.md, relative to the skill folder.
  * Only names are returned. The model reads one only when the instructions ask
@@ -862,6 +874,15 @@ function activate(context) {
     }),
   );
 
+  // Create the bar immediately so it is never blank while the first audit runs,
+  // then refresh it from the history we already have, then watch for changes.
+  updateStatus(null);
+  const startup = readAudit(context, extensionDir);
+  if (!startup.error) {
+    updateStatus(latestTurn(startup.report));
+  }
+  startAutoAudit(context, extensionDir);
+
   // The loader is a tool even when no skill was ever scanned, so counting it
   // here would hide the prompt that tells the user to scan.
   const skillTools = tools.filter((tool) => tool.name !== LOADER_NAME);
@@ -1008,6 +1029,141 @@ function readAudit(context, extensionDir) {
   };
 }
 
+/** Create the status-bar item, or null where the window offers none. */
+function ensureStatus() {
+  if (statusItem) return statusItem;
+  if (!vscode.window || typeof vscode.window.createStatusBarItem !== "function") {
+    return null;
+  }
+  try {
+    statusItem = vscode.window.createStatusBarItem(
+      "creel.audit",
+      (vscode.StatusBarAlignment && vscode.StatusBarAlignment.Right) || 2,
+      100,
+    );
+    statusItem.name = "Creel";
+    statusItem.command = "creel.auditReport";
+    statusItem.text = "$(info) Creel";
+    statusItem.tooltip = "Creel: no audit has run yet.";
+    statusItem.show();
+  } catch {
+    statusItem = null;
+  }
+  return statusItem;
+}
+
+/**
+ * Show the latest turn's verdicts in the status bar.
+ *
+ * Only the auto-audit calls this, so the bar never carries a guess from a
+ * stale read — and a missing or empty turn shows a neutral state rather than
+ * an invented one.
+ *
+ * @param {{attached: Array<{token: string, verdict: string}>}|null} turn
+ */
+function updateStatus(turn) {
+  const item = ensureStatus();
+  if (!item) return;
+
+  if (!turn || !turn.attached || !turn.attached.length) {
+    item.text = "$(info) Creel";
+    item.tooltip = "No skill attached in the most recent message.";
+    return;
+  }
+
+  const total = turn.attached.length;
+  const missing = turn.attached.filter((ref) => MISS_VERDICTS.has(ref.verdict));
+  const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
+  const ok = total - missing.length - bypassed.length;
+  const names = (list) => list.map((ref) => `#${ref.token}`).join(", ");
+
+  if (missing.length) {
+    item.text = `$(warning) ${ok}/${total} skills`;
+    item.tooltip = `Never loaded: ${names(missing)}`;
+  } else if (bypassed.length) {
+    item.text = `$(discard) ${ok}/${total} skills`;
+    item.tooltip =
+      `Loaded, but outside creel — ${names(bypassed)} arrived without the wrapper.`;
+  } else {
+    item.text = `$(check) ${ok}/${total} skills`;
+    item.tooltip = `Loaded through creel: ${names(turn.attached)}`;
+  }
+}
+
+/**
+ * Run the audit whenever a transcript changes, so verdicts surface without a
+ * command.
+ *
+ * Debounced, because a transcript is appended to while the turn is still
+ * running — reading it immediately would report a half-written file as a miss.
+ * Notification throttled, because one turn produces several writes. The whole
+ * thing is wrapped: a filesystem that refuses a watcher must degrade to the
+ * manual commands rather than stop the extension activating.
+ *
+ * @param {vscode.ExtensionContext} context
+ * @param {string} extensionDir
+ */
+function startAutoAudit(context, extensionDir) {
+  const dir = transcriptDir(context);
+  if (!dir || typeof fs.watch !== "function") return;
+
+  let timer = null;
+  let lastNotify = 0;
+
+  const run = () => {
+    const result = readAudit(context, extensionDir);
+    if (result.error) return;
+    const turn = latestTurn(result.report);
+    updateStatus(turn);
+    if (!turn || !turn.attached.length) return;
+
+    const missing = turn.attached.filter((ref) => MISS_VERDICTS.has(ref.verdict));
+    const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
+    if (!missing.length && !bypassed.length) return;
+
+    const now = Date.now();
+    if (now - lastNotify < NOTIFY_INTERVAL_MS) return;
+    lastNotify = now;
+
+    const total = turn.attached.length;
+    const message = missing.length
+      ? `${missing.length} of ${total} attached skill(s) were never loaded — ` +
+        missing.map((ref) => `#${ref.token}`).join(", ") +
+        "."
+      : `${bypassed.length} of ${total} attached skill(s) loaded outside creel — ` +
+        bypassed.map((ref) => `#${ref.token}`).join(", ") +
+        ".";
+
+    vscode.window
+      .showWarningMessage(`Creel: ${message}`, "Show report")
+      .then((choice) => {
+        if (choice === "Show report") {
+          vscode.commands.executeCommand("creel.auditReport");
+        }
+      })
+      .catch(() => {});
+  };
+
+  try {
+    const watcher = fs.watch(dir, { persistent: false }, () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(run, AUDIT_DEBOUNCE_MS);
+    });
+    context.subscriptions.push({
+      dispose: () => {
+        if (timer) clearTimeout(timer);
+        try {
+          watcher.close();
+        } catch {
+          // Already closed.
+        }
+      },
+    });
+  } catch {
+    // No watcher here. The manual commands still work.
+  }
+}
+
 function deactivate() {
   // Tools and commands are disposed through context.subscriptions.
 }
@@ -1019,6 +1175,8 @@ module.exports = {
   renderSkill,
   listRelatedFiles,
   resolveSkill,
+  updateStatus,
+  startAutoAudit,
   VARIANTS,
   VARIANT_LIST,
   pickVariant,
