@@ -2,7 +2,7 @@
   "name": "creel",
   "displayName": "Creel: attach skills with #",
   "description": "Attach any number of agent skills to one Copilot chat message, anywhere in the message, with # references.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "michael-obele",
   "license": "MIT",
   "repository": {
@@ -61,6 +61,12 @@
         "shortTitle": "Check last message"
       },
       {
+        "command": "creel.dashboard",
+        "title": "Audit dashboard",
+        "category": "Creel",
+        "shortTitle": "Dashboard"
+      },
+      {
         "command": "creel.auditReport",
         "title": "Audit report",
         "category": "Creel",
@@ -93,6 +99,10 @@
         },
         {
           "command": "creel.previewWrapper",
+          "when": "config.creel.developerMode"
+        },
+        {
+          "command": "creel.telemetry",
           "when": "config.creel.developerMode"
         }
       ]
@@ -131,8 +141,8 @@
             "native",
             "random"
           ],
-          "default": "baseline",
-          "markdownDescription": "Which wrapper shape to hand the model when a skill is invoked. Read on every call, so changing it needs no reinstall and no reload. `baseline` is what creel ships today; `must-keep` keeps the directive, the applicability note and the file listing while dropping the precedence paragraph; `design-doc` is the minimal shape in `docs/plans/2026-10-05-prompt-simplification-design.md`; `native` reproduces the built-in skill tool's own result; `random` picks one of the four for the whole window and stamps it into every injection, which is what makes a per-variant comparison possible. Affects the wrapper only — the standing tool text follows it at the next **Creel: Scan skills**."
+          "default": "must-keep",
+          "markdownDescription": "Which wrapper shape to hand the model when a skill is invoked. Read on every call, so changing it needs no reinstall and no reload. `must-keep` is what creel ships: one directive line, the applicability note and the file listing. `baseline` is the legacy shape, kept for comparison: directive, precedence paragraph, applicability note, file listing; `design-doc` is the minimal shape in `docs/plans/2026-10-05-prompt-simplification-design.md`; `native` reproduces the built-in skill tool's own result; `random` picks one of the four for the whole window and stamps it into every injection, which is what makes a per-variant comparison possible. Affects the wrapper only — the standing tool text follows it at the next **Creel: Scan skills**."
         }
       }
     },

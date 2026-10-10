@@ -145,12 +145,14 @@ function scanSkills(folders) {
  * The standing text for one tool: the whole argument for calling it, and the
  * only surface paid for on every request.
  *
- * `baseline` keeps the wording creel has always shipped. The other variants
- * drop the `#` clause — the tool name already encodes it — and the sentence
- * arguing against the built-in skill tool, per
- * docs/plans/2026-10-05-prompt-simplification-design.md. Measured across the
- * 101 registered tools: 9,949 chars full versus 3,106 lean, about 1,711 tokens
- * off every request whether or not anything is attached.
+ * `must-keep` is the default, and what creel ships: one sentence, no `#` clause
+ * and no sentence arguing against the built-in skill tool. `baseline` restores
+ * the wording creel shipped before that decision — directive, the `#` clause,
+ * and the anti-native sentence — and exists only as the control arm for the
+ * comparison in docs/plans/2026-10-05-prompt-simplification-design.md, so it is
+ * reachable only by setting `creel.wrapperVariant` to `baseline` on purpose.
+ * Measured across the 101 registered tools: 9,949 chars full versus 3,106 lean,
+ * about 1,711 tokens off every request whether or not anything is attached.
  *
  * @param {string} variant `baseline` or the simplified shapes
  * @param {string} title frontmatter name, or the folder name
@@ -165,7 +167,7 @@ function standingDescription(variant, title, ref) {
 }
 
 /** Turn collected skills into manifest entries plus the id -> skill map. */
-function buildEntries(skills, prefix, variant = "baseline") {
+function buildEntries(skills, prefix, variant = "must-keep") {
   const tools = [];
   const paths = {};
   const used = new Set(RESERVED);
@@ -287,7 +289,7 @@ function apply(extensionDir) {
   }
 
   const prefix = settings.prefix ?? "skill-";
-  const variant = settings.variant ?? "baseline";
+  const variant = settings.variant ?? "must-keep";
   const folders = settings.folders ?? [
     "~/.agents/skills",
     "~/.claude/skills",
@@ -384,7 +386,7 @@ if (require.main === module) {
     console.error(
       "Creel: refusing to write a skill list into the repo.\n" +
         "Run the generator in the installed copy instead:\n" +
-        "  node ~/.vscode/extensions/michael-obele.creel-0.4.0/generate.js\n" +
+        "  node ~/.vscode/extensions/michael-obele.creel-0.5.0/generate.js\n" +
         "Pass --force only if you really mean to commit a skill list.",
     );
     process.exit(1);

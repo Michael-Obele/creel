@@ -19,6 +19,7 @@ const {
   joinInjections,
   telemetryMarkdown,
   knownRefsFromSkills,
+  VERDICT_LABELS,
 } = require("./audit");
 
 /** Folders never worth offering as skill resources. */
@@ -90,6 +91,20 @@ const NOTIFY_INTERVAL_MS = 60000;
 
 /** Let a transcript settle before reading it; it is appended to while running. */
 const AUDIT_DEBOUNCE_MS = 1500;
+
+/** The audit report's filename inside this window's workspace storage. */
+const REPORT_NAME = "audit.md";
+
+/** A status-bar style icon per verdict, for the dashboard's rows. */
+const VERDICT_ICONS = {
+  HIT: "$(check)",
+  FAILED: "$(error)",
+  NATIVE: "$(discard)",
+  SKIPPED: "$(warning)",
+  UNRESOLVED: "$(warning)",
+  QUOTED: "$(quote)",
+  HANDLED: "$(check)",
+};
 
 /**
  * List the files that sit beside a SKILL.md, relative to the skill folder.
@@ -169,12 +184,12 @@ function readSkillBody(skillFile) {
  * is argued for in `modelDescription`, in generate.js.
  *
  * @param {{path: string, name: string, description?: string, reference?: string}} skill
- * @param {string} [variant] falls back to `baseline`, so an unknown or absent
- *   setting keeps shipping the shape creel has always shipped
+ * @param {string} [variant] falls back to `must-keep`, so an unknown or absent
+ *   setting keeps shipping the measured shape rather than the legacy one
  * @returns {string}
  */
 function renderSkill(skill, variant) {
-  const shape = VARIANTS.has(variant) ? variant : "baseline";
+  const shape = VARIANTS.has(variant) ? variant : "must-keep";
   if (shape === "design-doc") {
     return renderDesignDoc(skill);
   }
@@ -187,7 +202,12 @@ function renderSkill(skill, variant) {
   return renderBaseline(skill);
 }
 
-/** The shape creel ships today, kept byte-identical so the default cannot drift. */
+/**
+ * The shape creel shipped before must-keep became the default. Kept byte for
+ * byte so the comparison it exists for cannot drift.
+ * @param {{path: string, name: string, description?: string, reference?: string}} skill
+ * @returns {string}
+ */
 function renderBaseline(skill) {
   const reference = skill.reference ? `#${skill.reference}` : null;
   const parts = [
@@ -372,7 +392,8 @@ function registerLoader(context, extensionDir) {
          */
         async invoke(options) {
           const skills = loadSkills(extensionDir);
-          const input = options && options.input ? options.input.skill : undefined;
+          const input =
+            options && options.input ? options.input.skill : undefined;
           const found = resolveSkill(skills, input);
           if (!found) {
             const names = availableNames(skills);
@@ -402,7 +423,9 @@ function registerLoader(context, extensionDir) {
   } catch (error) {
     const log = ensureOutput();
     if (log) {
-      log.appendLine(`Creel: could not register ${LOADER_NAME} — ${error.message}`);
+      log.appendLine(
+        `Creel: could not register ${LOADER_NAME} — ${error.message}`,
+      );
     }
   }
 }
@@ -467,9 +490,9 @@ function currentVariant() {
       }
       return sessionVariant;
     }
-    return VARIANTS.has(value) ? value : "baseline";
+    return VARIANTS.has(value) ? value : "must-keep";
   } catch {
-    return "baseline";
+    return "must-keep";
   }
 }
 
@@ -591,12 +614,10 @@ function activate(context) {
   const tools = manifest.contributes?.languageModelTools ?? [];
   const skills = loadSkills(extensionDir);
 
-  if (context.globalStorageUri && context.globalStorageUri.fsPath) {
-    injectionLogPath = path.join(
-      context.globalStorageUri.fsPath,
-      "injections.jsonl",
-    );
-  }
+  // This window's storage first: the log is joined against this workspace's
+  // transcripts, so a file under the shared global storage would attribute
+  // another window's injections to this one.
+  injectionLogPath = resolveInjectionLogPath(context);
   refreshDeveloperMode(context, extensionDir);
   if (
     vscode.workspace &&
@@ -763,21 +784,198 @@ function activate(context) {
       );
     }),
 
-    vscode.commands.registerCommand("creel.auditReport", async () => {
-      const result = readAudit(context, extensionDir);
-      if (result.error) {
-        vscode.window.showWarningMessage(`Creel: ${result.error}`);
+    vscode.commands.registerCommand("creel.dashboard", async () => {
+      /** What the file would say, freshly written so a path always exists. */
+      const actionItems = (file) => [
+        {
+          label: "$(file-text) Open full report",
+          description: file || "",
+          action: "report",
+        },
+        {
+          label: "$(copy) Copy report path",
+          description: file || "",
+          action: "copy",
+          file,
+        },
+        { label: "$(refresh) Re-run audit", action: "rerun" },
+        // Both of these are developer surfaces, so they appear only in
+        // developer mode — the same gate the Command Palette entries use.
+        ...(developerMode
+          ? [
+              { label: "$(pulse) Telemetry", action: "telemetry" },
+              { label: "$(eye) Show last injection", action: "injection" },
+            ]
+          : []),
+      ];
+
+      const copyToClipboard = async (text) => {
+        const hasClipboard =
+          vscode.env &&
+          vscode.env.clipboard &&
+          typeof vscode.env.clipboard.writeText === "function";
+        if (hasClipboard) {
+          await vscode.env.clipboard.writeText(text);
+        }
+        vscode.window.showInformationMessage(
+          hasClipboard ? `Creel: copied ${text}` : `Creel: ${text}`,
+        );
+      };
+
+      /** A fresh audit, turned into the title, hint and rows of the pick. */
+      const build = () => {
+        const audit = renderAudit(context, extensionDir);
+        if (audit.error) {
+          return {
+            title: "Creel",
+            detail: "",
+            placeholder: audit.error,
+            items: actionItems(null),
+          };
+        }
+        const file = writeReport(context, REPORT_NAME, audit.content);
+        const turn = latestTurn(audit.report);
+        if (!turn || !turn.attached.length) {
+          return {
+            title: "Creel",
+            detail: "",
+            placeholder: "Nothing here has attached a skill with # yet.",
+            items: actionItems(file),
+          };
+        }
+
+        const total = turn.attached.length;
+        const missing = turn.attached.filter((ref) =>
+          MISS_VERDICTS.has(ref.verdict),
+        );
+        const bypassed = turn.attached.filter(
+          (ref) => ref.verdict === "NATIVE",
+        );
+        const ok = total - missing.length - bypassed.length;
+
+        return {
+          title:
+            `Creel · ${ok}/${total} loaded` +
+            (bypassed.length ? ` · ${bypassed.length} outside creel` : ""),
+          detail:
+            turn.calls.length === 0
+              ? "No calls are recorded for this message yet, so it may still " +
+                "be running."
+              : "",
+          placeholder: "Enter copies the # token. Actions are below.",
+          items: [
+            ...turn.attached.map((ref) => ({
+              label: `${VERDICT_ICONS[ref.verdict] || "$(info)"} #${ref.token}`,
+              description: VERDICT_LABELS[ref.verdict] || ref.verdict,
+              detail: ref.detail,
+              ref,
+            })),
+            ...(vscode.QuickPickItemKind
+              ? [{ label: "Actions", kind: vscode.QuickPickItemKind.Separator }]
+              : []),
+            ...actionItems(file),
+          ],
+        };
+      };
+
+      let pick = null;
+
+      const onPick = async (item) => {
+        if (!item) {
+          return;
+        }
+        if (!item.action) {
+          await copyToClipboard(`#${item.ref.token}`);
+          return;
+        }
+        if (item.action === "rerun") {
+          // Rerun in place: the pick is the audit, so rebuilding it beats
+          // closing and reopening on the user.
+          const state = build();
+          if (pick) {
+            pick.title = state.title;
+            pick.detail = state.detail;
+            pick.placeholder = state.placeholder;
+            pick.items = state.items;
+          }
+          return;
+        }
+        if (pick) {
+          pick.hide();
+        }
+        if (item.action === "report") {
+          await vscode.commands.executeCommand("creel.auditReport");
+          return;
+        }
+        if (item.action === "telemetry") {
+          await vscode.commands.executeCommand("creel.telemetry");
+          return;
+        }
+        if (item.action === "injection") {
+          await vscode.commands.executeCommand("creel.showInjection");
+          return;
+        }
+        if (item.action === "copy") {
+          let target = item.file;
+          if (!target) {
+            const audit = renderAudit(context, extensionDir);
+            target = audit.error
+              ? null
+              : writeReport(context, REPORT_NAME, audit.content);
+          }
+          if (!target) {
+            vscode.window.showWarningMessage(
+              "Creel: no report has been written for this workspace yet.",
+            );
+            return;
+          }
+          await copyToClipboard(target);
+        }
+      };
+
+      const state = build();
+      if (typeof vscode.window.createQuickPick !== "function") {
+        const chosen = await vscode.window.showQuickPick(state.items, {
+          title: state.title,
+          placeHolder: state.placeholder,
+        });
+        await onPick(chosen);
         return;
       }
 
-      const document = await vscode.workspace.openTextDocument({
-        content: toMarkdown(result.report, {
-          now: new Date().toISOString(),
-          source: result.source,
-        }),
-        language: "markdown",
+      pick = vscode.window.createQuickPick();
+      pick.title = state.title;
+      pick.detail = state.detail;
+      pick.placeholder = state.placeholder;
+      pick.matchOnDescription = true;
+      pick.matchOnDetail = true;
+      pick.items = state.items;
+      const accepted = pick.onDidAccept(() => {
+        onPick(pick.selectedItems && pick.selectedItems[0]);
       });
-      await vscode.window.showTextDocument(document, { preview: false });
+      if (typeof pick.onDidDispose === "function") {
+        pick.onDidDispose(() => {
+          try {
+            accepted.dispose();
+          } catch {
+            // A stub may hand back nothing to dispose of.
+          }
+        });
+      }
+      pick.show();
+    }),
+
+    vscode.commands.registerCommand("creel.auditReport", async () => {
+      const audit = renderAudit(context, extensionDir);
+      if (audit.error) {
+        vscode.window.showWarningMessage(`Creel: ${audit.error}`);
+        return;
+      }
+      const file = await openReport(context, REPORT_NAME, audit.content);
+      const log = ensureOutput();
+      if (file && log) {
+        log.appendLine(`${new Date().toISOString()}  report → ${file}`);
+      }
     }),
 
     vscode.commands.registerCommand("creel.telemetry", async () => {
@@ -798,11 +996,7 @@ function activate(context) {
           blocked,
         },
       );
-      const document = await vscode.workspace.openTextDocument({
-        content,
-        language: "markdown",
-      });
-      await vscode.window.showTextDocument(document, { preview: false });
+      await openReport(context, "telemetry.md", content);
     }),
   );
 
@@ -901,6 +1095,90 @@ function activate(context) {
 }
 
 /**
+ * This window's own directory in workspace storage — `<workspaceStorage>/<hash>/
+ * <extension id>`. Every file creel writes for the audit lives here, because
+ * the audit describes this window. Null when no workspace is open.
+ * @param {vscode.ExtensionContext} context
+ * @returns {string|null}
+ */
+function workspaceStorageDir(context) {
+  if (!context.storageUri || !context.storageUri.fsPath) {
+    return null;
+  }
+  return context.storageUri.fsPath;
+}
+
+/**
+ * Where the injection log lives: this workspace's storage, falling back to the
+ * extension's global storage only when no workspace is open. There is no window
+ * scope to violate in that case, and the log must still be written somewhere.
+ * @param {vscode.ExtensionContext} context
+ * @returns {string|null}
+ */
+function resolveInjectionLogPath(context) {
+  const dir = workspaceStorageDir(context);
+  if (dir) {
+    return path.join(dir, "injections.jsonl");
+  }
+  if (context.globalStorageUri && context.globalStorageUri.fsPath) {
+    return path.join(context.globalStorageUri.fsPath, "injections.jsonl");
+  }
+  return null;
+}
+
+/**
+ * Write a report to disk so it can be read by anything with a path — an agent
+ * debugging a run, a shell command, a later session — instead of only by the
+ * editor that happens to hold it.
+ * @param {vscode.ExtensionContext} context
+ * @param {string} name
+ * @param {string} content
+ * @returns {string|null} the absolute path, or null when it was not written
+ */
+function writeReport(context, name, content) {
+  const dir = workspaceStorageDir(context);
+  if (!dir || typeof content !== "string") {
+    return null;
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, content, "utf8");
+    return file;
+  } catch {
+    // A report that cannot be written must never take the audit with it.
+    return null;
+  }
+}
+
+/**
+ * Open a report: the written file when there is one, an untitled document when
+ * there is not. The untitled path is the behaviour creel shipped before the
+ * report had a home, and it stays as the fallback for a window with no
+ * workspace storage.
+ * @param {vscode.ExtensionContext} context
+ * @param {string} name
+ * @param {string} content
+ * @returns {Promise<string|null>} the path that was opened, if any
+ */
+async function openReport(context, name, content) {
+  const file = writeReport(context, name, content);
+  if (file && vscode.Uri && typeof vscode.Uri.file === "function") {
+    const document = await vscode.workspace.openTextDocument(
+      vscode.Uri.file(file),
+    );
+    await vscode.window.showTextDocument(document, { preview: false });
+    return file;
+  }
+  const document = await vscode.workspace.openTextDocument({
+    content,
+    language: "markdown",
+  });
+  await vscode.window.showTextDocument(document, { preview: false });
+  return file;
+}
+
+/**
  * This workspace's Copilot transcripts. No cross-workspace fallback on purpose:
  * it mixes in other projects' chats, and "check my last message" should say
  * "nothing here" rather than name a stranger's message.
@@ -928,12 +1206,8 @@ function transcriptDir(context) {
  */
 function readInjectionLog(context) {
   if (!injectionLogPath) {
-    if (context.globalStorageUri && context.globalStorageUri.fsPath) {
-      injectionLogPath = path.join(
-        context.globalStorageUri.fsPath,
-        "injections.jsonl",
-      );
-    } else {
+    injectionLogPath = resolveInjectionLogPath(context);
+    if (!injectionLogPath) {
       return [];
     }
   }
@@ -1029,10 +1303,35 @@ function readAudit(context, extensionDir) {
   };
 }
 
+/**
+ * The current audit, rendered: one read, one pass of the markdown, used by the
+ * report command, the dashboard and the watcher alike.
+ * @param {vscode.ExtensionContext} context
+ * @param {string} extensionDir
+ * @returns {{report: object, source: string, content: string}|{error: string}}
+ */
+function renderAudit(context, extensionDir) {
+  const result = readAudit(context, extensionDir);
+  if (result.error) {
+    return { error: result.error };
+  }
+  return {
+    report: result.report,
+    source: result.source,
+    content: toMarkdown(result.report, {
+      now: new Date().toISOString(),
+      source: result.source,
+    }),
+  };
+}
+
 /** Create the status-bar item, or null where the window offers none. */
 function ensureStatus() {
   if (statusItem) return statusItem;
-  if (!vscode.window || typeof vscode.window.createStatusBarItem !== "function") {
+  if (
+    !vscode.window ||
+    typeof vscode.window.createStatusBarItem !== "function"
+  ) {
     return null;
   }
   try {
@@ -1042,7 +1341,7 @@ function ensureStatus() {
       100,
     );
     statusItem.name = "Creel";
-    statusItem.command = "creel.auditReport";
+    statusItem.command = "creel.dashboard";
     statusItem.text = "$(info) Creel";
     statusItem.tooltip = "Creel: no audit has run yet.";
     statusItem.show();
@@ -1082,8 +1381,7 @@ function updateStatus(turn) {
     item.tooltip = `Never loaded: ${names(missing)}`;
   } else if (bypassed.length) {
     item.text = `$(discard) ${ok}/${total} skills`;
-    item.tooltip =
-      `Loaded, but outside creel — ${names(bypassed)} arrived without the wrapper.`;
+    item.tooltip = `Loaded, but outside creel — ${names(bypassed)} arrived without the wrapper.`;
   } else {
     item.text = `$(check) ${ok}/${total} skills`;
     item.tooltip = `Loaded through creel: ${names(turn.attached)}`;
@@ -1111,15 +1409,25 @@ function startAutoAudit(context, extensionDir) {
   let lastNotify = 0;
 
   const run = () => {
-    const result = readAudit(context, extensionDir);
-    if (result.error) return;
-    const turn = latestTurn(result.report);
+    const audit = renderAudit(context, extensionDir);
+    if (audit.error) return;
+    // Kept current on every run, so the file an agent reads never lags the
+    // verdicts in the status bar — nobody has to click anything to refresh it.
+    writeReport(context, REPORT_NAME, audit.content);
+    const turn = latestTurn(audit.report);
     updateStatus(turn);
     if (!turn || !turn.attached.length) return;
 
-    const missing = turn.attached.filter((ref) => MISS_VERDICTS.has(ref.verdict));
+    const missing = turn.attached.filter((ref) =>
+      MISS_VERDICTS.has(ref.verdict),
+    );
     const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
     if (!missing.length && !bypassed.length) return;
+
+    // A transcript is written while the turn is still running. With no call
+    // recorded yet, a miss is a guess, so the toast waits for evidence — the
+    // status bar has already shown it.
+    if (turn.calls.length === 0) return;
 
     const now = Date.now();
     if (now - lastNotify < NOTIFY_INTERVAL_MS) return;

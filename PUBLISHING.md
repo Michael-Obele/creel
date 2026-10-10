@@ -74,8 +74,8 @@ Run these in order, from the repository root.
 
    ```bash
    git add -A
-   git commit -m "release: 0.4.0"
-   git tag v0.4.0
+   git commit -m "release: 0.5.0"
+   git tag v0.5.0
    git push origin main --tags
    ```
 
@@ -101,7 +101,7 @@ Three places carry the version. Keep them equal:
 | Carrier                    | Where                                                             |
 | -------------------------- | ----------------------------------------------------------------- |
 | `package.json` → `version` | What the Marketplace records, and what names the installed folder |
-| Git tag                    | `v0.4.0`                                                          |
+| Git tag                    | `v0.5.0`                                                          |
 | GitHub Release             | Same tag, same `.vsix` asset                                      |
 
 A git tag that disagrees with `package.json` is the error worth guarding against, because it produces a GitHub Release that does not match what the Marketplace actually serves.
@@ -112,7 +112,7 @@ A git tag that disagrees with `package.json` is the error worth guarding against
 | ------------------------- | ------------------------------------------------------------------ | ------------- | ------------ |
 | A Microsoft account       | You probably have one. Decide now which account owns the extension | Free          | Everything   |
 | Publisher ID              | You invent it on the Marketplace site: `michael-obele`             | Free          | Everything   |
-| `creel-0.4.0.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading    |
+| `creel-0.5.0.vsix`        | `npx --yes @vscode/vsce package`                                   | Free          | Uploading    |
 | Azure DevOps organization | https://dev.azure.com, if you have never signed in                 | Free, no card | **Not used** |
 | Personal access token     | Azure DevOps → Personal access tokens                              | Free          | **Not used** |
 
@@ -188,7 +188,7 @@ From the repository root, after the version bump is committed:
 npx --yes @vscode/vsce package
 ```
 
-That writes `creel-0.4.0.vsix`: 9 files, a little under 30 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
+That writes `creel-0.5.0.vsix`: 9 files, a little under 30 KB. Verified with `vsce` 4.0.0. If you see an `npm does not support Node.js` warning, ignore it; the package still builds.
 
 ## Upload the new version
 
@@ -264,9 +264,9 @@ Read the file list it prints. It should be exactly nine files, and `icon.png` mu
 Step 5 pushes the tag, but a tag is not a Release. Attach the package so a `.vsix` is downloadable without going through the Marketplace:
 
 ```bash
-gh release create v0.4.0 creel-0.4.0.vsix \
+gh release create v0.5.0 creel-0.5.0.vsix \
   --repo Michael-Obele/creel \
-  --title "v0.4.0" \
+  --title "v0.5.0" \
   --notes "README rewritten as a landing page. No behaviour change. See CHANGELOG.md."
 ```
 

@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.5.0
+
+### The audit stops crying wolf
+
+- The auto-audit waited 1.5 s for a transcript to settle, but a transcript is
+  written _while_ the turn runs. A message that attached three skills and had no
+  call recorded yet was reported as three misses, with no way to take it back.
+  A turn with no calls now updates the status bar and stays quiet; the warning
+  waits for a recorded call, and a miss is then a fact rather than a guess.
+- **Creel: Telemetry** moved behind `creel.developerMode`, where the other
+  measurement commands live. Audit and dashboard stay for everyone.
+
+### The report is a file, and the status bar is a dashboard
+
+- **Creel: Audit report** writes `audit.md` into this workspace's storage and
+  opens that file, instead of an untitled buffer nothing else could read. The
+  path is what you hand an agent. The auto-audit keeps the file current on every
+  run, so it never lags the status bar.
+- Clicking the status bar opens a dashboard: one row per attached skill with its
+  verdict and the reason it has that verdict, then the actions. Enter copies the
+  `#` name. **Creel: Audit dashboard** reaches it from the palette.
+- `injections.jsonl` moved from the extension's global storage into the same
+  workspace-scoped folder. It was shared by every window, so joining it against
+  one workspace's transcripts attributed another window's injections here.
+
+### One wrapper ships
+
+- `must-keep` is the default wrapper, in the extension and in a scan. The
+  `baseline` shape — the directive, the precedence paragraph and the sentence
+  arguing against the built-in skill tool — is now reachable only by asking for
+  it: the evidence says the built-in loader follows a `SKILL.md` unaided.
+
+### No personal skill list can be published
+
+- `bun run build` strips the scanned tool list from the manifest before
+  packaging and restores the file afterwards, so a build taken from a working
+  tree can no longer publish the names, titles and descriptions of this
+  machine's skills. It reports what it stripped.
+- The scanner's guard, `languageModelTools: []` in the committed manifest, and
+  the install-time scan are unchanged: each user scans their own machine.
+
+### Housekeeping
+
+- `GLOSSARY.md` records the words: attach compared with load, the three routes,
+  the six verdicts.
+- The README's wrong setting id (`chat.useSkillAdherencePrompt`) is corrected to
+  `chat.experimental.useSkillAdherencePrompt`.
+
 ## 0.4.0
 
 ### The model can load a skill on its own

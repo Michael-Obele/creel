@@ -282,15 +282,64 @@ function cmdBump(spec) {
   return nextVersion;
 }
 
+/** This machine's manifest, or null when it cannot be read. */
+function readManifest() {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The shipped manifest carries `languageModelTools: []`. A scan writes this
+ * machine's skills into that list — names, titles and the description of every
+ * skill, which belong to nobody else, since each user runs their own scan. A
+ * build taken straight from a working tree would publish that inventory, so it
+ * is stripped for the package and the file is restored afterwards, whatever
+ * the packaging does.
+ * @returns {{scanned: number, restore: () => void}}
+ */
+function stripScannedTools() {
+  const file = path.join(root, "package.json");
+  const before = fs.readFileSync(file, "utf8");
+  const manifest = JSON.parse(before);
+  const scanned = manifest.contributes?.languageModelTools?.length || 0;
+  if (manifest.contributes) {
+    manifest.contributes.languageModelTools = [];
+  }
+  fs.writeFileSync(file, JSON.stringify(manifest, null, 2) + "\n");
+  return {
+    scanned,
+    restore: () => fs.writeFileSync(file, before),
+  };
+}
+
 function cmdBuild() {
   const version = currentVersion();
   const out = `creel-${version}.vsix`;
+  const scanned = readManifest()?.contributes?.languageModelTools?.length || 0;
   if (dryRun) {
     console.log(`[dry run] vsce package --no-dependencies --out ${out}`);
+    if (scanned) {
+      console.log(
+        `[dry run] would strip ${scanned} scanned tool(s) from the shipped manifest`,
+      );
+    }
     return;
   }
   console.log(`Packaging creel ${version} …`);
-  run(`vsce package --no-dependencies --out ${out}`);
+  const { scanned: found, restore } = stripScannedTools();
+  try {
+    run(`vsce package --no-dependencies --out ${out}`);
+  } finally {
+    restore();
+  }
+  if (found) {
+    console.log(
+      `  stripped ${found} scanned tool(s) — each user scans their own`,
+    );
+  }
   const stat = fs.statSync(path.join(root, out));
   console.log(`  ${out}  ${(stat.size / 1024).toFixed(1)} KB`);
   console.log(

@@ -68,7 +68,7 @@ Installed from a packaged `.vsix`? The tool list starts empty on purpose. Run **
 | Attach several              | Keep adding them. Only exact duplicates are collapsed                         |
 | Attach mid-message          | Yes. References sit wherever you put them                                     |
 | Re-scan after adding skills | **Creel: Scan skills**, then reload                                           |
-| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.4.0/generate.js`             |
+| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.5.0/generate.js`             |
 
 ## Where it comes from
 
@@ -85,13 +85,11 @@ Multi-skill selection is still open upstream ([microsoft/vscode#312279](https://
 
 ## What the model receives
 
-A skill only works if the model treats it as instructions rather than as reading material. A plain markdown file returned from a tool reads as reference data, so the model files it away instead of following it. Creel wraps every skill:
+Creel wraps every skill in a short frame: one directive line, when the skill applies, and the folder listing. The body is passed through untouched.
 
 ```text
-<skill name="ultrathink" path="/home/node/.agents/skills/ultrathink/SKILL.md">
-These are authoritative instructions for this request. Apply them now, before
-producing other output about the task. Treat them as directives, not as
-reference material, and do not merely summarise them.
+<skill name="ultrathink" path="/home/node/.agents/skills/ultrathink/SKILL.md" reference="#skill-ultrathink">
+Follow these instructions now, before other output about the task.
 
 When this skill applies: Deep thinking mode. Approach problems like a craftsman…
 
@@ -100,13 +98,15 @@ Take a deep breath. …
 </skill>
 ```
 
-The wrapper leads with the directive, states when the skill applies, and lists the skill folder last so it reads as an index rather than as content. The listing is capped at 40 files and 3 levels deep, and skips `.git`, `node_modules`, `dist` and similar.
+The listing is capped at 40 files and 3 levels deep, and skips `.git`, `node_modules`, `dist` and similar.
 
-VS Code carries its own version of this framing in `agentPrompt.tsx`:
+The frame is deliberately small, and Creel does not claim more for it than the evidence supports. Across every skill it is about 600 characters against a body that averages about 7,900, and a small adherence probe in October 2026 (two runs per shape, one model) found the body carrying the adherence with no measurable difference from the frame on top of it. The frame stays for the tag, the applicability note and the file index, not because any particular wording was shown to change behaviour.
+
+VS Code carries its own version of this framing:
 
 > "Always check if any skills apply to the user's request… Multiple skill files may be needed for a single request."
 
-That reminder only renders when `chat.useSkillAdherencePrompt` is on, and the setting defaults to off. Creel applies the framing either way.
+That reminder only renders when `chat.experimental.useSkillAdherencePrompt` is on, and the setting defaults to off. Creel applies its frame either way.
 
 ## How it works
 
@@ -139,7 +139,7 @@ the model can call on its own:
   `implement`). VS Code's loader honours that flag and answers "Skill not found".
   Creel does not edit the frontmatter — it works around it.
 
-**Creel: Telemetry** joins `injections.jsonl` against this workspace's transcripts
+With `creel.developerMode` on, **Creel: Telemetry** joins `injections.jsonl` against this workspace's transcripts
 and reports, per wrapper shape: calls, forced versus autonomous, mean payload size,
 the five largest payloads, and anything it could not attribute. Set
 `creel.wrapperVariant` to `random` to give the comparison something to compare.
@@ -150,6 +150,19 @@ the five largest payloads, and anything it could not attribute. Set
 | ----------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `creel.referencePrefix` | `skill-`                                                    | Prefix on every `#` name. This keeps a skill apart from an MCP server that shares its name, such as the `sepia` skill and the `sepia` MCP server, or `playwright`, or `exa`. Set it to `""` for bare names. |
 | `creel.skillFolders`    | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` | Where to look for `<name>/SKILL.md`. Supports `~/`.                                                                                                                                                         |
+
+## What loaded
+
+The status bar shows the last message's verdicts: `$(check) 2/2 skills` when everything arrived through Creel, `$(warning) 1/2 skills` naming what did not, `$(discard)` when a skill arrived through the built-in loader instead.
+
+Click it for the dashboard: one row per attached skill with its verdict and the reason, then the actions. Pressing Enter on a row copies that `#` name, which is the fastest way to attach it again.
+
+| Command                       | What it does                                                                                                                                  |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Creel: Check last message** | Runs the audit now and reports the last message's verdicts.                                                                                   |
+| **Creel: Audit report**       | Writes the full report to `audit.md` in this workspace's storage and opens it. The path is also in the dashboard, ready to paste to an agent. |
+
+A message that has no tool call recorded yet is not reported as a miss. Creel reads a transcript while the turn is still running, so it waits for a call before it warns, and the status bar carries the live state in the meantime.
 
 ## Limits
 
@@ -167,7 +180,7 @@ The committed `package.json` ships `"languageModelTools": []` on purpose, so no 
 $ node generate.js
 Creel: refusing to write a skill list into the repo.
 Run the generator in the installed copy instead:
-  node ~/.vscode/extensions/michael-obele.creel-0.4.0/generate.js
+  node ~/.vscode/extensions/michael-obele.creel-0.5.0/generate.js
 Pass --force only if you really mean to commit a skill list.
 ```
 
@@ -179,24 +192,25 @@ The tool list is static JSON read at load, so a development build cannot add
 tools the installed copy does not already have. The installed copy is therefore
 the test rig, and the debugging aids are settings rather than build flags.
 
-Set `creel.developerMode` to turn on two commands that stay hidden from the
+Set `creel.developerMode` to turn on three commands that stay hidden from the
 Command Palette otherwise:
 
 | Command                        | What it shows                                                                      |
 | ------------------------------ | ---------------------------------------------------------------------------------- |
 | **Creel: Show last injection** | The exact text the last invoked skill handed the model, with its variant and size. |
 | **Creel: Preview wrapper**     | Renders any skill's wrapper without invoking a model.                              |
+| **Creel: Telemetry**           | Calls, forced versus autonomous, and payload sizes, joined per wrapper shape.      |
 
 `creel.wrapperVariant` picks the wrapper shape, and it is read on every call —
 so changing it needs no reinstall and no reload:
 
-| Value                | Shape                                                                                                                               |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `baseline` (default) | What creel ships today: directive, precedence, applicability note, file listing.                                                    |
-| `must-keep`          | One directive line, the applicability note and the file listing — precedence dropped.                                                |
-| `design-doc`         | The simplified shape in [the design doc](./docs/plans/2026-10-05-prompt-simplification-design.md): one directive line and the body. |
-| `native`             | The built-in skill tool's own result, reproduced from the shipped bundle.                                                           |
-| `random`             | Picks one of the four for the whole window and stamps it into every injection — what makes a per-variant comparison possible.       |
+| Value                 | Shape                                                                                                                               |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `must-keep` (default) | One directive line, the applicability note and the file listing. This is what ships.                                                |
+| `baseline`            | The legacy shape, kept for comparison: directive, precedence paragraph, applicability note, file listing.                           |
+| `design-doc`          | The simplified shape in [the design doc](./docs/plans/2026-10-05-prompt-simplification-design.md): one directive line and the body. |
+| `native`              | The built-in skill tool's own result, reproduced from the shipped bundle.                                                           |
+| `random`              | Picks one of the four for the whole window and stamps it into every injection — what makes a per-variant comparison possible.       |
 
 Developer mode also switches on automatically in an Extension Development Host
 (`F5`), or when a `.creel-dev` file sits in the extension folder. In a
@@ -204,26 +218,31 @@ development host **Creel: Scan skills** asks first, because the scan result
 would land in the committed `package.json`.
 
 While developer mode is on, every invocation is appended to `injections.jsonl`
-in the extension's global storage — tool, variant, size, timestamp — so a turn
+in this workspace's storage — tool, variant, size, timestamp — so a turn
 can be attributed to the variant that produced it. **Creel: Telemetry** reads
-that file back and joins it to the transcripts.
+that file back and joins it to the transcripts, and the audit report sits
+beside it as `audit.md`.
 
-Both test suites run against a stub `vscode`, so no editor is needed:
+Every suite runs against a stub `vscode`, so no editor is needed:
 
 ```bash
-node tests/wrapper-shapes.cjs
-node tests/activate-smoke.cjs
+for f in tests/*.cjs; do node "$f"; done
 ```
+
+`activate-smoke` covers the developer-mode wiring, `report-surface` the report
+file and the dashboard, `wrapper-shapes` and `cost-matrix` the wrapper shapes,
+`audit-verdicts` and `telemetry-join` the analysis, `load-skill-tool` the
+loader, and `release-script` the release script against a throwaway checkout.
 
 ## Releasing
 
 Three commands, in this order:
 
-| Command                 | What it does                                                                                      |
-| ----------------------- | ------------------------------------------------------------------------------------------------- |
-| `bun run release`       | Bumps the version in every file that carries it, commits, tags `vX.Y.Z`, pushes, creates the GitHub release. |
-| `bun run build`         | Packages `creel-X.Y.Z.vsix` from that version.                                                    |
-| `bun run attach`        | Uploads the `.vsix` onto the GitHub release.                                                      |
+| Command           | What it does                                                                                                 |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ |
+| `bun run release` | Bumps the version in every file that carries it, commits, tags `vX.Y.Z`, pushes, creates the GitHub release. |
+| `bun run build`   | Packages `creel-X.Y.Z.vsix` from that version.                                                               |
+| `bun run attach`  | Uploads the `.vsix` onto the GitHub release.                                                                 |
 
 Pass `patch` (default), `minor`, `major` or an exact `x.y.z` after `bun run
 release`. `bun run bump` stops before anything is pushed, and every command

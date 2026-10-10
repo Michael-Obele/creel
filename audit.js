@@ -700,9 +700,14 @@ function telemetryMarkdown(joined, meta) {
   }
 
   lines.push("", "## Largest payloads", "");
-  const largest = [...rows].sort((a, b) => (b.chars || 0) - (a.chars || 0)).slice(0, 5);
+  const largest = [...rows]
+    .sort((a, b) => (b.chars || 0) - (a.chars || 0))
+    .slice(0, 5);
   if (largest.length) {
-    lines.push("| Chars | Skill | Variant | Route |", "| --- | --- | --- | --- |");
+    lines.push(
+      "| Chars | Skill | Variant | Route |",
+      "| --- | --- | --- | --- |",
+    );
     for (const row of largest) {
       lines.push(
         `| ${row.chars} | \`${row.reference || row.tool}\` | ${row.variant} | ${row.route} |`,
@@ -725,7 +730,9 @@ function telemetryMarkdown(joined, meta) {
   }
 
   lines.push("## Skills the built-in loader refuses", "");
-  const blocked = (meta.blocked || []).slice().sort((a, b) => a.localeCompare(b));
+  const blocked = (meta.blocked || [])
+    .slice()
+    .sort((a, b) => a.localeCompare(b));
   lines.push(
     blocked.length
       ? `${blocked.length} skill(s) carry \`disable-model-invocation: true\`, so VS Code's own loader answers "Skill not found". \`creel_loadSkill\` and \`#\` both still work:\n\n` +
