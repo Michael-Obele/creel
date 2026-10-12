@@ -159,11 +159,51 @@ function scanSkills(folders) {
  * @param {string} ref the `#` reference, e.g. `skill-tdd`
  * @returns {string}
  */
-function standingDescription(variant, title, ref) {
-  if (variant === "baseline") {
-    return `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`;
-  }
-  return `Load the "${title}" skill.`;
+/**
+ * A skill's own description, compressed to the words that decide a call.
+ *
+ * This is the routing signal. A skill's `modelDescription` is the ONLY text a
+ * model sees before it chooses a tool — the `#` picker shows names, the hint
+ * shows names, and `renderSkill` runs only after the call lands. Saying
+ * `Load the "discretion" skill.` names the skill and nothing else, so the
+ * model matches on the name alone. Appending the skill's own description puts
+ * "use when the answer depends on weighing options" in front of it, which is
+ * what the decision actually turns on.
+ *
+ * Capped, because ~106 of these sit in the standing tool list and are paid
+ * for on every request. 180 chars ≈ 45 tokens each, front-loaded so the cut
+ * lands after the trigger, not before it.
+ *
+ * @param {string} summary the skill's frontmatter description
+ * @param {number} [max]
+ * @returns {string} `When: …`, or "" when there is nothing to say
+ */
+function whenClause(summary, max = 180) {
+  const text = String(summary || "").replace(/\s+/g, " ").trim();
+  if (!text) return "";
+  if (text.length <= max) return `When: ${text}`;
+  const cut = text.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `When: ${cut.slice(0, lastSpace > 60 ? lastSpace : max).trim()}…`;
+}
+
+/**
+ * The standing text for one skill tool: the frame for the wrapper variant,
+ * plus the trigger words that let the model decide to call at all.
+ *
+ * @param {string} variant one of baseline | design-doc | must-keep | native
+ * @param {string} title the skill's own name
+ * @param {string} ref the `#` reference name
+ * @param {string} [summary] the skill's frontmatter description
+ * @returns {string}
+ */
+function standingDescription(variant, title, ref, summary) {
+  const frame =
+    variant === "baseline"
+      ? `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`
+      : `Load the "${title}" skill.`;
+  const when = whenClause(summary);
+  return when ? `${frame} ${when}` : frame;
 }
 
 /** Turn collected skills into manifest entries plus the id -> skill map. */
@@ -207,8 +247,10 @@ function buildEntries(skills, prefix, variant = "must-keep") {
       // once, whether or not anything is attached, so this is the only text
       // that can change the decision to call. The framing that shapes the
       // payload is in renderSkill, after the call.
-      // Measured: a long BLOCKING/NEVER version changed nothing.
-      modelDescription: standingDescription(variant, title, ref),
+      // Measured: a long BLOCKING/NEVER version changed nothing — but that
+      // tested imperative framing, not the skill's own trigger words, which
+      // are the content the routing decision needs.
+      modelDescription: standingDescription(variant, title, ref, summary),
       canBeReferencedInPrompt: true,
       icon: "$(lightbulb)",
       tags: ["skills"],
