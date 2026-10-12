@@ -191,9 +191,12 @@ function buildEntries(skills, prefix, variant = "must-keep") {
     const meta = readFrontmatter(skill.skillFile);
     const title = meta.name || skill.folderName;
     const summary = (meta.description || `The ${title} skill.`).slice(0, 900);
-    // The id is what the model sees as the function name, so it stays plain:
-    // `skill_tdd`, not a branded prefix it has no use for.
-    const id = ref.replace(/[^a-z0-9]+/g, "_");
+    // The id IS the `#` name. VS Code's tool-name pattern is
+    // `^(?!copilot_|vscode_)[\w-]+$`, so hyphens are legal, and the model's
+    // name-only tool-reference hint then matches the tool it must call.
+    // Naming these `skill_tdd` while the reference was `skill-tdd` meant the
+    // hint and the tool list disagreed by one character.
+    const id = ref;
 
     tools.push({
       name: id,

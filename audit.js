@@ -80,14 +80,37 @@ function looksQuoted(text) {
 }
 
 /**
- * Mirrors generate.js: the reference name with every run of non-alphanumerics
- * flattened to a single underscore. Keep the two in step or the audit invents
- * misses that are not real.
+ * Flatten any generation of a creel tool id to one comparable form.
+ *
+ * Three generations exist in the wild and all three must read as the same
+ * skill, or historical transcripts turn into false misses:
+ *   `skill-tdd`        current — the tool name is the `#` name
+ *   `skill_tdd`        the underscore era (generate.js before 2026-10-12)
+ *   `creel_skill_tdd`  the branded era, before the prefix was dropped
+ * Everything non-alphanumeric collapses to `_`, and the legacy `creel_`
+ * prefix is stripped, so all three normalise to `skill_tdd`.
+ *
+ * @param {string} name a tool id from a transcript, or a `#` reference name
+ * @returns {string}
+ */
+function normalizeToolName(name) {
+  return String(name || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^creel_/, "");
+}
+
+/**
+ * Mirrors generate.js: the tool id is the `#` reference name itself, with any
+ * legacy `creel_` prefix removed. Kept in step with the generator, or the
+ * audit invents misses that are not real.
  * @param {string} referenceName the `#` name, e.g. `skill-copywriting`
- * @returns {string} the tool id, e.g. `skill_copywriting`
+ * @returns {string} the tool id, e.g. `skill-copywriting`
  */
 function toolIdFor(referenceName) {
-  return referenceName.replace(/[^a-z0-9]+/g, "_");
+  return String(referenceName || "")
+    .toLowerCase()
+    .replace(/^creel_/, "");
 }
 
 /**
@@ -290,10 +313,12 @@ function verdictFor(ref, turn) {
     const id = toolIdFor(ref.token);
     out.tool = id;
 
-    // `endsWith` also catches the branded `creel_skill_x` ids recorded before the
-    // prefix was dropped, so older transcripts stay readable.
+    // Normalised comparison, so all three id generations match the one skill:
+    // `skill-tdd` (current), `skill_tdd` (underscore era) and
+    // `creel_skill_tdd` (branded era) all fold to `skill_tdd`.
+    const want = normalizeToolName(id);
     const called = turn.calls.find(
-      (call) => call.tool === id || call.tool.endsWith(`_${id}`),
+      (call) => normalizeToolName(call.tool) === want,
     );
     if (called) {
       if (called.outcome === "failed") {
@@ -854,6 +879,7 @@ function toMarkdown(report, meta) {
 module.exports = {
   VERDICT_LABELS,
   toolIdFor,
+  normalizeToolName,
   knownRefsFromSkills,
   classify,
   refsIn,
