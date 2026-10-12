@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.0
+
+### The tool is named what you type
+
+- A skill's tool is now named after its `#` reference, hyphens and all:
+  `skill-tdd`, where it used to be `skill_tdd`. Nothing changes at the
+  keyboard. What changes is what the model is told: a tool reference reaches it
+  as a bare name, so a hint of `#skill-tdd` used to name a tool that did not
+  exist under that spelling.
+- The audit matches every generation of the id — the hyphenated one, the
+  underscore one, and the older `creel_skill_tdd` — so recorded history still
+  reads the way it did when it was written.
+- **Rescan after upgrading.** The shipped manifest carries an empty tool list by
+  design and each machine scans its own skills, so run **Creel: Scan skills**
+  and reload to pick up the new names.
+
 ## 0.5.0
 
 ### The audit stops crying wolf
