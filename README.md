@@ -64,7 +64,7 @@ Installed from a packaged `.vsix`? The tool list starts empty on purpose. Run **
 
 | Task                        | How                                                                           |
 | --------------------------- | ----------------------------------------------------------------------------- |
-| Attach a skill              | Type `#` in chat and pick one, or type `#skill-` plus a few letters to filter |
+| Attach a skill              | Type `#` in chat and pick one, or type `#skill-` plus a few letters to filter. Each entry shows the skill's own description, read from its SKILL.md |
 | Attach several              | Keep adding them. Only exact duplicates are collapsed                         |
 | Attach mid-message          | Yes. References sit wherever you put them                                     |
 | Re-scan after adding skills | **Creel: Scan skills**, then reload                                           |
