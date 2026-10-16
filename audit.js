@@ -13,23 +13,142 @@
  * Pure functions over that text: no `vscode`, no disk, no clock. The command
  * layer in extension.js does the I/O.
  *
- * Verdicts: HIT (the tool ran and returned) · FAILED (called, but the tool
- * reported an error, so nothing arrived) · NATIVE (read via the built-in skill
- * tool, so creel's wrapper did not run) · SKIPPED (nothing read it) ·
- * UNRESOLVED (not in the current `#` list) · QUOTED (the token sat inside pasted
- * or quoted output, so it was never offered as an attachment and is excluded
- * from the rates) · HANDLED (VS Code inlined it) · NOT CALLED (another token).
+ * Verdicts: HIT (creel's tool ran and returned) · FAILED (creel's tool ran and
+ * reported an error) · NATIVE (the built-in tool read it, so creel's wrapper did
+ * not run — the body DID arrive) · NATIVE-FAILED (the built-in tool was tried and
+ * errored, so nothing arrived) · NOT-RUN (the model called it and the call never
+ * executed) · SKIPPED (nothing called it) · UNRESOLVED (not in the current `#`
+ * list) · QUOTED (the token sat inside pasted output, so it was never offered as
+ * an attachment and is excluded from the rates) · HANDLED (VS Code inlined it) ·
+ * NOT CALLED (another token).
+ *
+ * Those verdicts are read from two records that must not be confused. An
+ * `assistant.message` carries the model's *intent* to call a tool, under the same
+ * `toolCallId` the execution will use; `tool.execution_start` carries what
+ * actually ran. A call in the first and not the second was decided and never
+ * made — a different fact from "nothing called it", and the one this file used to
+ * lose. Reading the intent also names every call, which is what makes a failure
+ * attributable: `tool.execution_complete` records only `{toolCallId, success}`.
  */
 
 const REF_RE = /#([A-Za-z0-9_][A-Za-z0-9_:.\-]*)/g;
 
 const CREEL_PREFIX = "skill-";
 
+/** VS Code's own skill reader. A call to it is the NATIVE route. */
+const NATIVE_TOOL = "skill";
+
+/** Creel's autonomous loader, whose id generate.js owns. */
+const LOADER_TOOL = "creel_loadSkill";
+
+/**
+ * Every generation of a creel skill tool: `skill-tdd` (current), `skill_tdd`
+ * (the underscore era) and `creel_skill_tdd` (the branded era). The loader is
+ * `creel_loadSkill`, which this deliberately does NOT match: it is a separate
+ * box, checked by name.
+ */
+const CREEL_TOOL_RE = /^(?:creel_)?skill[-_][a-z0-9]/i;
+
+/**
+ * Which route a call took. Two doors are creel's — the per-skill tool and the
+ * autonomous loader — and collapsing them is deliberate: the question this
+ * answers is "did creel serve it", not "which of creel's tools did".
+ * @param {string} tool a tool id, from either an intent or an execution
+ * @returns {"creel"|"native"|"other"}
+ */
+function routeOf(tool) {
+  const id = String(tool || "");
+  if (id === NATIVE_TOOL) {
+    return "native";
+  }
+  if (id === LOADER_TOOL || CREEL_TOOL_RE.test(id)) {
+    return "creel";
+  }
+  return "other";
+}
+
+/**
+ * A skill name from a tool argument, folded to the character set a `#` name
+ * uses. Tolerates the argument arriving as a string, because a tool shape can
+ * change upstream and a throw here would take the whole audit with it.
+ * @param {unknown} args
+ * @returns {string|null}
+ */
+function slugOf(args) {
+  let value = null;
+  if (typeof args === "string") {
+    // The two records that describe one call disagree about this field's type:
+    // `assistant.message.toolRequests[].arguments` is a JSON *string*, while
+    // `tool.execution_start.data.arguments` is already an object. Parse when it
+    // parses, because the string form IS a JSON payload; otherwise the caller
+    // passed a bare name, which is what the loader receives.
+    const text = args.trim();
+    if (text.startsWith("{")) {
+      try {
+        const parsed = JSON.parse(text);
+        value = parsed && typeof parsed === "object" ? parsed.skill : null;
+      } catch {
+        value = null;
+      }
+    } else {
+      value = args;
+    }
+  } else if (args && typeof args === "object") {
+    value = args.skill;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const slug = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || null;
+}
+
+/**
+ * The `#` reference a call was about, or null when the call was not about a
+ * skill.
+ *
+ * Three shapes carry the name differently, which is the whole reason this is one
+ * function. The built-in tool spells it out in its own `skill` argument. So does
+ * the loader — but the loader accepts a folder name or a title as readily as a
+ * reference, so its result is a best-effort label rather than an exact one. A
+ * creel per-skill tool carries the name in the tool id itself, so that one is
+ * exact.
+ *
+ * @param {string} tool
+ * @param {unknown} args
+ * @returns {string|null} a reference name such as `skill-tdd`, or null
+ */
+function refOfCall(tool, args) {
+  const id = String(tool || "");
+  if (id === NATIVE_TOOL || id === LOADER_TOOL) {
+    const slug = slugOf(args);
+    return slug ? `${CREEL_PREFIX}${slug}` : null;
+  }
+  if (CREEL_TOOL_RE.test(id)) {
+    const normalized = normalizeToolName(id);
+    const bare = normalized.startsWith("skill_")
+      ? normalized.slice("skill_".length)
+      : normalized;
+    // Inner separators are folded too, not just the leading one. The underscore
+    // era wrote `skill_polya_how_to_solve_it` for what is now
+    // `skill-polya-how-to-solve-it`; leaving the inner underscores alone made one
+    // skill read as two, and made the older half look unlisted forever.
+    return bare ? `${CREEL_PREFIX}${bare.replace(/_/g, "-")}` : null;
+  }
+  return null;
+}
+
 /** Human-readable form of each verdict, for the notification and the report. */
 const VERDICT_LABELS = {
   HIT: "called",
   FAILED: "errored",
   NATIVE: "bypassed creel",
+  "NATIVE-FAILED": "bypassed, and errored",
+  "NOT-RUN": "called but never ran",
   SKIPPED: "never loaded",
   UNRESOLVED: "unresolved",
   QUOTED: "quoted",
@@ -214,13 +333,19 @@ function skillArg(args) {
 
 /**
  * Read one transcript into the event kinds the audit cares about: the message
- * that opened a turn, each tool call, and each call's completion. Every other
- * event type is dropped at the door.
+ * that opened a turn, the model's intent to call a tool, each call that actually
+ * started, and each call's completion. Every other event type is dropped at the
+ * door.
  *
- * The completion is the half that used to be missing. It carries `success`, so
- * a call that started and then errored can be told apart from one that actually
- * returned something — and a call with no completion at all is simply a
- * transcript that was still being written.
+ * The intent is the half that was missing first. `assistant.message.toolRequests`
+ * is the model committing to a call, under the `toolCallId` the execution will
+ * carry — so a decided-but-never-made call is visible, and the tool's *name* is
+ * known even for a call the executor refused.
+ *
+ * The completion is the half that was missing second. It carries `success`, so a
+ * call that started and then errored can be told apart from one that returned.
+ * It carries nothing else: no tool name, no error text. The name comes from the
+ * matching intent, joined on `toolCallId`.
  *
  * @param {string} name session name, used for display
  * @param {string} text the raw .jsonl contents
@@ -252,6 +377,25 @@ function parseTranscript(name, text) {
         at: record.timestamp || "",
         text: data.content || "",
       });
+    } else if (record.type === "assistant.message") {
+      // One assistant message can commit to several calls at once, so this
+      // fans out rather than pushing a single event.
+      const requests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
+      for (const request of requests) {
+        if (!request || !request.toolCallId) {
+          continue;
+        }
+        events.push({
+          kind: "intent",
+          at: record.timestamp || "",
+          id: request.toolCallId,
+          tool: request.name || "",
+          // A string here, an object on `tool.execution_start`. Both shapes are
+          // tolerated downstream rather than normalised here, so the raw record
+          // stays inspectable.
+          args: request.arguments === undefined ? null : request.arguments,
+        });
+      }
     } else if (record.type === "tool.execution_start") {
       events.push({
         kind: "call",
@@ -274,19 +418,101 @@ function parseTranscript(name, text) {
 }
 
 /**
+ * One record per call, keyed on `toolCallId`, from a session's three sightings
+ * of it.
+ *
+ * Building this in one pass over the whole session — rather than updating a
+ * turn's call list as events arrive — is what removes the old lost-completion
+ * bug: a completion recorded after the next user message used to find no owner
+ * and be dropped, leaving the call `pending` and therefore counted as a hit it
+ * never was. Here the outcome is settled before any turn sees the call.
+ *
+ * @param {{session: string, events: Array<object>}} session
+ * @returns {Array<object>} calls, in the order they were first seen
+ */
+function callsIn(session) {
+  const byId = new Map();
+  const order = [];
+
+  const open = (event) => {
+    let call = byId.get(event.id);
+    if (!call) {
+      call = {
+        id: event.id,
+        session: session.session,
+        at: event.at || "",
+        tool: "",
+        args: null,
+        // The three sightings, each independently absent in the wild.
+        intent: false,
+        ran: false,
+        success: undefined,
+      };
+      byId.set(event.id, call);
+      order.push(event.id);
+    }
+    return call;
+  };
+
+  for (const event of session.events) {
+    if (!event.id) {
+      continue;
+    }
+    if (event.kind === "intent") {
+      const call = open(event);
+      call.intent = true;
+      call.tool = call.tool || event.tool;
+      if (call.args === null) {
+        call.args = event.args;
+      }
+    } else if (event.kind === "call") {
+      const call = open(event);
+      call.ran = true;
+      call.startedAt = event.at || "";
+      call.tool = event.tool || call.tool;
+      // The execution's arguments are an object while the intent's are a JSON
+      // string, so prefer the object whenever one is on offer.
+      if (event.args && typeof event.args === "object") {
+        call.args = event.args;
+      } else if (call.args === null) {
+        call.args = event.args;
+      }
+    } else if (event.kind === "complete") {
+      open(event).success = event.success;
+    }
+  }
+
+  return order.map((id) => {
+    const call = byId.get(id);
+    call.route = routeOf(call.tool);
+    call.skill = refOfCall(call.tool, call.args);
+    // `ran` and `arrived` are the two questions the old audit could not separate:
+    // the model asked, and the tool actually delivered something.
+    call.arrived = call.ran && call.success !== false;
+    return call;
+  });
+}
+
+/**
  * The fate of one reference inside one turn.
  *
- * A creel reference counts as a HIT only if its own tool ran. Loading the same
- * skill some other way is deliberately *not* a hit: the skill arrived, but the
- * wrapper that frames it as instructions did not.
+ * A creel reference counts as a HIT only if its own tool ran and returned.
+ * Loading the same skill some other way is deliberately *not* a hit: the skill
+ * arrived, but the wrapper that frames it as instructions did not.
  *
- * Two verdicts exist to keep the rates honest. `QUOTED` means the `#token` sat
- * inside pasted output rather than a message the user sent, so it never reached
- * the model as an attachment — it is shown, then excluded. `FAILED` means the
- * tool was called and reported an error, so nothing was delivered.
+ * Four verdicts exist to keep the rates honest, and each one names a fact the
+ * old three-way split blurred:
+ * - `QUOTED` — the `#token` sat inside pasted output, not a message the user
+ *   sent, so it was never offered as an attachment. Shown, then excluded.
+ * - `FAILED` — creel's tool ran and reported an error, so nothing was delivered.
+ * - `NATIVE-FAILED` — the built-in tool was *tried* and errored. The skill did
+ *   not arrive. Counting this as a load was the single biggest inflation in the
+ *   published rate.
+ * - `NOT-RUN` — the model committed to the call and the call never executed.
+ *   That is not the same as no call, and blaming the model for it is wrong.
  *
  * @param {{token: string, kind: string}} ref
- * @param {object} turn a turn whose `calls` carry an `outcome`
+ * @param {object} turn a turn whose `calls` are resolved call records
  * @returns {{token: string, kind: string, tool: string|null, verdict: string, detail: string}}
  */
 function verdictFor(ref, turn) {
@@ -313,25 +539,35 @@ function verdictFor(ref, turn) {
     const id = toolIdFor(ref.token);
     out.tool = id;
 
-    // Normalised comparison, so all three id generations match the one skill:
-    // `skill-tdd` (current), `skill_tdd` (underscore era) and
-    // `creel_skill_tdd` (branded era) all fold to `skill_tdd`.
-    const want = normalizeToolName(id);
-    const called = turn.calls.find(
-      (call) => normalizeToolName(call.tool) === want,
+    // Match on the resolved reference rather than the raw tool name, so all
+    // three id generations read as the one skill: `skill-tdd` (current),
+    // `skill_tdd` (underscore era) and `creel_skill_tdd` (branded era).
+    const mine = (call) => call.skill === ref.token;
+
+    const creel = turn.calls.find(
+      (call) => mine(call) && call.route === "creel",
     );
-    if (called) {
-      if (called.outcome === "failed") {
+    if (creel) {
+      if (!creel.ran) {
+        // Decided and never executed. A miss, but a different one: a permission
+        // or configuration problem, not model discretion — which is why it is
+        // reported apart from SKIPPED instead of inside it.
+        out.verdict = "NOT-RUN";
+        out.detail =
+          `called ${id}, but the call never ran — nothing was executed`;
+        return out;
+      }
+      if (creel.success === false) {
         out.verdict = "FAILED";
         out.detail = `called ${id}, but the tool reported an error — nothing was returned`;
         return out;
       }
-      // `pending` means the transcript has no completion event for it yet: the
-      // session was still open, or the write was cut short. Falling back to HIT
-      // keeps the old behaviour instead of inventing a failure we cannot see.
+      // No completion recorded at all used to mean "still being written". Now
+      // that a late completion is joined by id rather than dropped, a missing
+      // one is genuinely absent, and saying so beats implying the tool returned.
       out.verdict = "HIT";
       out.detail =
-        called.outcome === "pending"
+        creel.success === undefined
           ? `called ${id} (no completion recorded yet)`
           : `called ${id}`;
       return out;
@@ -345,11 +581,28 @@ function verdictFor(ref, turn) {
       return out;
     }
 
-    const slug = ref.token.slice(CREEL_PREFIX.length);
     const native = turn.calls.find(
-      (call) => call.tool === "skill" && skillArg(call.args) === slug,
+      (call) => mine(call) && call.route === "native",
     );
     if (native) {
+      if (!native.ran) {
+        out.verdict = "NOT-RUN";
+        out.detail =
+          "called through the built-in skill tool, but the call never ran — " +
+          "nothing was executed";
+        return out;
+      }
+      if (native.success === false) {
+        // The distinction this report used to lose. The built-in tool was tried,
+        // it errored, and the skill therefore never arrived — yet the old
+        // verdict said NATIVE and the rate counted it as delivered.
+        out.verdict = "NATIVE-FAILED";
+        out.detail =
+          "the built-in skill tool was tried and errored — the skill did not " +
+          "arrive, and creel's wrapper never ran either";
+        return out;
+      }
+      const slug = ref.token.slice(CREEL_PREFIX.length);
       out.verdict = "NATIVE";
       out.detail =
         `not called — ${slug} was read with the built-in skill tool instead; ` +
@@ -400,10 +653,16 @@ function blankTotals() {
     creelHits: 0,
     creelFailed: 0,
     creelNative: 0,
+    creelNativeFailed: 0,
+    creelNotRun: 0,
     creelMisses: 0,
+    creelDelivered: 0,
+    creelNotDelivered: 0,
     creelLoaded: 0,
+    creelLegacyLoaded: 0,
     creelRouteRate: null,
     creelLoadRate: null,
+    creelLegacyRate: null,
     unresolved: 0,
     quotedTurns: 0,
     quotedRefs: 0,
@@ -423,19 +682,43 @@ function blankTotals() {
  *
  * @param {Array<{session: string, events: Array<object>}>} sessions in chronological order
  * @param {Iterable<string>} knownRefs the reference names in the current # list
- * @returns {{turns: Array<object>, totals: object}}
+ * @returns {{turns: Array<object>, totals: object, calls: Array<object>}}
  */
 function analyze(sessions, knownRefs) {
   const known = knownRefs instanceof Set ? knownRefs : new Set(knownRefs || []);
   const turns = [];
+  const calls = [];
 
   for (const session of sessions) {
+    const sessionCalls = callsIn(session);
+    const byId = new Map(sessionCalls.map((call) => [call.id, call]));
+    calls.push(...sessionCalls);
+
+    // Whether the resolved skill is in the `#` list this reader was given. A
+    // call outside it is not a miss — it came from another build — but saying
+    // which is which stops a stale list from reading as model misbehaviour.
+    for (const call of sessionCalls) {
+      call.listed = Boolean(call.skill && known.has(call.skill));
+    }
+
     let current = null;
+    // Which call ids have already been assigned to a turn. Ownership goes to the
+    // FIRST sighting, so a completion that arrives after the next message cannot
+    // attach its call to that later turn — and a call first seen before any user
+    // message belongs to no turn and is dropped, exactly as before.
+    const claimed = new Set();
 
     const close = () => {
       if (!current) {
         return;
       }
+      // Resolve the call records this turn touched. Ownership was settled by the
+      // FIRST sighting of each id, so a completion arriving after the next
+      // message cannot reassign the call — or strand it as `pending`, which the
+      // old reader then counted as a hit.
+      current.calls = [...current.callIds]
+        .map((id) => byId.get(id))
+        .filter(Boolean);
       current.callNames = current.calls.map((call) => call.tool);
       current.refs = current.refs.map((ref) => verdictFor(ref, current));
       current.attached = current.refs.filter(
@@ -466,28 +749,14 @@ function analyze(sessions, knownRefs) {
             token,
             kind: classify(token, known),
           })),
+          callIds: new Set(),
           calls: [],
         };
-      } else if (event.kind === "complete") {
-        // Match the completion back to its call so the verdict can see whether
-        // the tool actually returned something.
+      } else if (event.id && !claimed.has(event.id)) {
+        claimed.add(event.id);
         if (current) {
-          const match = current.calls.find(
-            (call) => call.id && call.id === event.id,
-          );
-          if (match) {
-            match.outcome = event.success === false ? "failed" : "ok";
-          }
+          current.callIds.add(event.id);
         }
-      } else if (current) {
-        current.calls.push({
-          id: event.id,
-          tool: event.tool,
-          args: event.args,
-          at: event.at,
-          // No completion seen yet — the session may still be open.
-          outcome: "pending",
-        });
       }
     }
 
@@ -528,6 +797,10 @@ function analyze(sessions, knownRefs) {
         totals.creelFailed++;
       } else if (ref.verdict === "NATIVE") {
         totals.creelNative++;
+      } else if (ref.verdict === "NATIVE-FAILED") {
+        totals.creelNativeFailed++;
+      } else if (ref.verdict === "NOT-RUN") {
+        totals.creelNotRun++;
       } else if (ref.verdict === "UNRESOLVED") {
         totals.unresolved++;
       } else {
@@ -554,15 +827,28 @@ function analyze(sessions, knownRefs) {
   // Two deliberately separate questions: did the reference drive creel's own
   // tool, and did the skill get read at all. Collapsing them into one "hit rate"
   // is what made the original measurement misleading.
-  totals.creelLoaded = totals.creelHits + totals.creelNative;
+  //
+  // `creelDelivered` is the honest numerator: a skill that was attempted and
+  // errored did not arrive, so it cannot count. `creelLegacyLoaded` is what this
+  // report published before 2026-10-16, when a failed built-in attempt was
+  // credited as a load; it is kept so older baselines stay readable rather than
+  // being silently restated, and it is reported beneath the corrected figure.
+  totals.creelDelivered = totals.creelHits + totals.creelNative;
+  totals.creelNotDelivered =
+    totals.creelFailed + totals.creelNativeFailed + totals.creelNotRun;
+  totals.creelLoaded = totals.creelDelivered;
   totals.creelRouteRate = totals.creelRefs
     ? totals.creelHits / totals.creelRefs
     : null;
   totals.creelLoadRate = totals.creelRefs
-    ? totals.creelLoaded / totals.creelRefs
+    ? totals.creelDelivered / totals.creelRefs
+    : null;
+  totals.creelLegacyLoaded = totals.creelDelivered + totals.creelNativeFailed;
+  totals.creelLegacyRate = totals.creelRefs
+    ? totals.creelLegacyLoaded / totals.creelRefs
     : null;
 
-  return { turns, totals };
+  return { turns, totals, calls };
 }
 
 /**
@@ -777,9 +1063,152 @@ function percent(rate) {
 }
 
 /**
+ * Every call that was about a skill, counted by skill — whether or not a `#`
+ * reference caused it.
+ *
+ * This is the view the ref-keyed audit could not provide. A reference-keyed
+ * report can only ever answer "was the thing I typed honoured"; ask it about a
+ * skill the model loaded on its own and there is nothing to read. Counting calls
+ * answers the question people actually ask.
+ *
+ * Deliberately carries no message text and no reasoning text: skill names and
+ * counts only. That is what makes it safe to run across every workspace on the
+ * machine, which is the only way the numbers get big enough to mean anything.
+ *
+ * @param {Array<object>} calls from `analyze`
+ * @returns {{calls: number, required: number, arrived: number, failed: number,
+ *   neverRan: number, creel: number, native: number, unlabelled: number,
+ *   unlisted: number, bySkill: Record<string, object>}}
+ */
+function callTotals(calls) {
+  const summary = {
+    calls: 0,
+    required: 0,
+    arrived: 0,
+    failed: 0,
+    neverRan: 0,
+    creel: 0,
+    native: 0,
+    unlabelled: 0,
+    unlisted: 0,
+    bySkill: {},
+  };
+
+  for (const call of calls || []) {
+    if (!call) {
+      continue;
+    }
+    // Only calls that were about a skill: anything on a skill route, whether or
+    // not the name could be recovered. Every other tool on the machine is not
+    // this view's business, and counting them would drown the signal.
+    if (call.route === "other" && !call.skill) {
+      continue;
+    }
+    summary.calls++;
+    if (call.route === "creel") {
+      summary.creel++;
+    } else if (call.route === "native") {
+      summary.native++;
+    }
+    if (call.intent) {
+      summary.required++;
+    }
+    if (!call.ran) {
+      summary.neverRan++;
+    } else if (call.success === false) {
+      summary.failed++;
+    } else if (call.arrived) {
+      summary.arrived++;
+    }
+    if (!call.skill) {
+      summary.unlabelled++;
+      continue;
+    }
+    if (call.listed === false) {
+      summary.unlisted++;
+    }
+    const bucket =
+      summary.bySkill[call.skill] ||
+      (summary.bySkill[call.skill] = {
+        calls: 0,
+        arrived: 0,
+        failed: 0,
+        neverRan: 0,
+        routes: {},
+      });
+    bucket.calls++;
+    bucket.routes[call.route] = (bucket.routes[call.route] || 0) + 1;
+    if (!call.ran) {
+      bucket.neverRan++;
+    } else if (call.success === false) {
+      bucket.failed++;
+    } else if (call.arrived) {
+      bucket.arrived++;
+    }
+  }
+
+  return summary;
+}
+
+/** How many rows the per-skill table prints before it says what it left out. */
+const MAX_CALL_ROWS = 40;
+
+/**
+ * The call-keyed view, as markdown. Counts only — see `callTotals`.
+ * @param {object} summary the result of `callTotals`
+ * @returns {string}
+ */
+function callsMarkdown(summary) {
+  const lines = [
+    "## Every skill run",
+    "",
+    "Every call that was about a skill, whether or not a `#` reference caused it, so",
+    "an autonomous load appears here too. Counts only: no message text, no reasoning",
+    "text, nothing quoted from a prompt.",
+    "",
+    `- Calls about a skill: **${summary.calls}**`,
+    `- Through creel: **${summary.creel}** · through the built-in skill tool: **${summary.native}**`,
+    `- Arrived: **${summary.arrived}** · errored: **${summary.failed}** · called but never ran: **${summary.neverRan}**`,
+    summary.unlabelled
+      ? `- No skill name in the call, so not attributed: **${summary.unlabelled}**`
+      : undefined,
+    summary.unlisted
+      ? `- Named a skill outside the current \`#\` list, so from another build: **${summary.unlisted}**`
+      : undefined,
+    "",
+  ];
+
+  const skills = Object.entries(summary.bySkill || {});
+  if (!skills.length) {
+    lines.push("No call in these transcripts was about a skill.", "");
+    return lines.filter((line) => line !== undefined).join("\n");
+  }
+
+  skills.sort((a, b) => b[1].calls - a[1].calls || a[0].localeCompare(b[0]));
+  lines.push(
+    "| Skill | Calls | Creel | Built-in | Arrived | Errored | Never ran |",
+    "| --- | --- | --- | --- | --- | --- | --- |",
+  );
+  for (const [skill, bucket] of skills.slice(0, MAX_CALL_ROWS)) {
+    lines.push(
+      `| \`${skill}\` | ${bucket.calls} | ${bucket.routes.creel || 0} | ` +
+        `${bucket.routes.native || 0} | ${bucket.arrived} | ${bucket.failed} | ${bucket.neverRan} |`,
+    );
+  }
+  if (skills.length > MAX_CALL_ROWS) {
+    lines.push(
+      "",
+      `Showing the ${MAX_CALL_ROWS} most-called of ${skills.length} skills.`,
+    );
+  }
+  lines.push("");
+  return lines.filter((line) => line !== undefined).join("\n");
+}
+
+/**
  * The full report, as markdown, for opening in an untitled editor.
  *
- * @param {{turns: Array<object>, totals: object}} report
+ * @param {object} report from `analyze`
  * @param {{source?: string, now: string}} meta `now` is passed in rather than
  *   read here, so this function stays free of the clock like everything else.
  * @returns {string}
@@ -809,8 +1238,20 @@ function toMarkdown(report, meta) {
       ? `- Called the creel tool, but it reported an error: **${t.creelFailed}**`
       : undefined,
     `- Read by the built-in skill tool instead: **${t.creelNative}**`,
+    t.creelNativeFailed
+      ? `- The built-in skill tool was tried and **errored**, so nothing arrived: ` +
+        `**${t.creelNativeFailed}**`
+      : undefined,
+    t.creelNotRun
+      ? `- Called, but the call **never ran**: **${t.creelNotRun}**`
+      : undefined,
     `- Never read at all: **${t.creelMisses}**`,
-    `- Skill loaded by any route: **${t.creelLoaded}** of ${t.creelRefs} (${percent(t.creelLoadRate)})`,
+    `- Skill arrived by any route: **${t.creelDelivered}** of ${t.creelRefs} (${percent(t.creelLoadRate)})`,
+    t.creelLegacyLoaded !== t.creelDelivered
+      ? `- *The same figure as this report printed before 2026-10-16: ` +
+        `**${t.creelLegacyLoaded}** of ${t.creelRefs} (${percent(t.creelLegacyRate)}). ` +
+        `It counted a built-in attempt that errored as a load, so it read high.*`
+      : undefined,
     `- Other \`#\` tokens, mostly MCP servers: **${t.otherHits}/${t.otherRefs}** called`,
     `- VS Code's own references (\`#file:\`, \`#prompt:\`), inlined by VS Code: **${t.editorRefs}**`,
     `- Messages using a slash skill: **${t.turnsWithSlash}**`,
@@ -819,10 +1260,12 @@ function toMarkdown(report, meta) {
   ];
 
   const withRefs = report.turns.filter((turn) => turn.refs.length);
+  const callSection = callsMarkdown(callTotals(report.calls));
   if (!withRefs.length) {
     lines.push(
       "No message in these transcripts attached anything with `#`.",
       "",
+      callSection,
     );
     return lines.filter((line) => line !== undefined).join("\n");
   }
@@ -834,7 +1277,9 @@ function toMarkdown(report, meta) {
   const shown = withRefs.slice(-MAX_ROWS);
   const omitted = withRefs.length - shown.length;
 
-  lines.push("## Messages that attached something", "");
+  // The call-keyed view goes first: "was skill X called" is the question people
+  // arrive with, and it is answerable for skills that no reference ever named.
+  lines.push(callSection, "## Messages that attached something", "");
   if (omitted) {
     lines.push(
       `Showing the most recent ${MAX_ROWS} of ${withRefs.length}.`,
@@ -878,18 +1323,26 @@ function toMarkdown(report, meta) {
 
 module.exports = {
   VERDICT_LABELS,
+  NATIVE_TOOL,
+  LOADER_TOOL,
   toolIdFor,
   normalizeToolName,
+  routeOf,
+  refOfCall,
+  slugOf,
   knownRefsFromSkills,
   classify,
   refsIn,
   skillArg,
   looksQuoted,
   parseTranscript,
+  callsIn,
   analyze,
   latestTurn,
   joinInjections,
   telemetryMarkdown,
+  callTotals,
+  callsMarkdown,
   percent,
   toMarkdown,
 };

@@ -83,8 +83,21 @@ let injectionLogPath = null;
 /** The status-bar item, created on demand so a stub window never breaks. */
 let statusItem = null;
 
-/** Verdicts that mean the skill never arrived through creel at all. */
-const MISS_VERDICTS = new Set(["SKIPPED", "UNRESOLVED", "FAILED"]);
+/**
+ * Verdicts that mean the skill never arrived at all.
+ *
+ * `NATIVE-FAILED` belongs here, not with the bypasses: the built-in tool was
+ * tried and errored, so nothing was delivered. `NOT-RUN` belongs here too — the
+ * model asked and no tool executed, so the skill did not arrive either. Leaving
+ * either of them out made the bar report a failed load as a success.
+ */
+const MISS_VERDICTS = new Set([
+  "SKIPPED",
+  "UNRESOLVED",
+  "FAILED",
+  "NATIVE-FAILED",
+  "NOT-RUN",
+]);
 
 /** Notify at most this often — a watcher fires several times per turn. */
 const NOTIFY_INTERVAL_MS = 60000;
@@ -100,6 +113,8 @@ const VERDICT_ICONS = {
   HIT: "$(check)",
   FAILED: "$(error)",
   NATIVE: "$(discard)",
+  "NATIVE-FAILED": "$(error)",
+  "NOT-RUN": "$(circle-slash)",
   SKIPPED: "$(warning)",
   UNRESOLVED: "$(warning)",
   QUOTED: "$(quote)",
@@ -397,6 +412,9 @@ function registerLoader(context, extensionDir) {
           const found = resolveSkill(skills, input);
           if (!found) {
             const names = availableNames(skills);
+            // Recorded before throwing, so a lookup that found nothing leaves a
+            // trace here as well as in the transcript.
+            recordFailedLookup(LOADER_NAME, input);
             // Throwing makes the call FAILED in the audit rather than a HIT that
             // delivered nothing, and hands the model the list it needs to retry.
             throw new Error(
@@ -533,12 +551,23 @@ function refreshDeveloperMode(context, extensionDir) {
   );
 }
 
-/** Remember what the model was actually handed, newest first. */
+/**
+ * Remember what the model was actually handed, newest first.
+ *
+ * The persisted half is written unconditionally, and it used to be gated on
+ * `developerMode`. That gate cost more than it saved: the wrapper variant is the
+ * one dimension of a call nothing else records — the transcript keeps the tool,
+ * the skill and the outcome, but the payload's *shape* appears nowhere in it, not
+ * even for creel's own tool (verified: the wrapper text only ever surfaces in
+ * `reasoningText` and in pastes, never in a tool result). A witness only some
+ * windows keep is not evidence.
+ */
 function recordInjection(entry) {
   const record = {
     at: new Date().toISOString(),
     ...entry,
     chars: entry.text.length,
+    ok: true,
   };
   injections.unshift(record);
   if (injections.length > MAX_INJECTIONS) {
@@ -553,18 +582,48 @@ function recordInjection(entry) {
           `variant=${record.variant}  ${record.chars} chars`,
       );
     }
-    persistInjection(record);
   }
+  persistInjection(record);
 }
 
 /**
- * The cheap half of an injection — no payload — appended to a log file the
- * audit can later join turns against, so a verdict can be attributed to the
- * variant that produced it. Only written in developer mode.
- * @param {{at: string, tool: string, reference: string, variant: string, chars: number}} record
+ * A lookup that found nothing.
+ *
+ * The transcript can see this failure too — the intent names the skill and the
+ * completion says `success: false` — but only when the intent was recorded. This
+ * is the one place creel knows it outright rather than inferring it, so it is
+ * logged alongside the successes: one file, every attempt.
+ *
+ * @param {string} tool the tool that failed to resolve a skill
+ * @param {unknown} input what the model asked for
+ */
+function recordFailedLookup(tool, input) {
+  const record = {
+    at: new Date().toISOString(),
+    tool,
+    reference: String(input === undefined || input === null ? "" : input),
+    variant: currentVariant(),
+    chars: 0,
+    ok: false,
+  };
+  const log = ensureOutput();
+  if (log) {
+    log.appendLine(
+      `${record.at}  ${tool}  no skill matched ${JSON.stringify(record.reference)}`,
+    );
+  }
+  persistInjection(record);
+}
+
+/**
+ * The cheap half of an injection — no payload — appended to a log the audit can
+ * join turns against, so a verdict can be attributed to the variant that
+ * produced it. Always written: see `recordInjection` for why gating this on
+ * developer mode lost the only record of the wrapper shape.
+ * @param {{at: string, tool: string, reference: string, variant: string, chars: number, ok?: boolean}} record
  */
 function persistInjection(record) {
-  if (!developerMode || !injectionLogPath) {
+  if (!injectionLogPath) {
     return;
   }
   try {
@@ -587,6 +646,7 @@ function persistInjection(record) {
         reference: record.reference,
         variant: record.variant,
         chars: record.chars,
+        ok: record.ok !== false,
       }) + "\n",
     );
   } catch {
@@ -1371,19 +1431,51 @@ function updateStatus(turn) {
   }
 
   const total = turn.attached.length;
-  const missing = turn.attached.filter((ref) => MISS_VERDICTS.has(ref.verdict));
-  const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
-  const ok = total - missing.length - bypassed.length;
   const names = (list) => list.map((ref) => `#${ref.token}`).join(", ");
+  // "Arrived" is the honest numerator for the warning row: HIT was delivered
+  // through creel, NATIVE was delivered by the built-in reader. A built-in
+  // attempt that ERRORED delivered nothing, so it sits with the misses rather
+  // than the bypasses — lumping it in with the bypasses is what made a failed
+  // load read as a success.
+  const arrived = turn.attached.filter(
+    (ref) => ref.verdict === "HIT" || ref.verdict === "NATIVE",
+  ).length;
+  // The discard row is about the creel route specifically — its tooltip says so —
+  // so its numerator counts only what creel delivered. Using `arrived` there
+  // would contradict the tooltip on the same row.
+  const throughCreel = turn.attached.filter(
+    (ref) => ref.verdict === "HIT",
+  ).length;
 
-  if (missing.length) {
-    item.text = `$(warning) ${ok}/${total} skills`;
-    item.tooltip = `Never loaded: ${names(missing)}`;
+  const never = turn.attached.filter(
+    (ref) => ref.verdict === "SKIPPED" || ref.verdict === "UNRESOLVED",
+  );
+  const broke = turn.attached.filter(
+    (ref) => ref.verdict === "FAILED" || ref.verdict === "NATIVE-FAILED",
+  );
+  // The model did its part and the call never started. A different problem from
+  // the model never asking, so it is named apart rather than folded into "never
+  // loaded" — that label would blame the wrong side.
+  const neverRan = turn.attached.filter((ref) => ref.verdict === "NOT-RUN");
+  const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
+
+  if (never.length || broke.length || neverRan.length) {
+    item.text = `$(warning) ${arrived}/${total} skills`;    const parts = [];
+    if (never.length) {
+      parts.push(`never loaded: ${names(never)}`);
+    }
+    if (broke.length) {
+      parts.push(`tried and errored: ${names(broke)}`);
+    }
+    if (neverRan.length) {
+      parts.push(`called but never ran: ${names(neverRan)}`);
+    }
+    item.tooltip = parts.join(" · ");
   } else if (bypassed.length) {
-    item.text = `$(discard) ${ok}/${total} skills`;
+    item.text = `$(discard) ${throughCreel}/${total} skills`;
     item.tooltip = `Loaded, but outside creel — ${names(bypassed)} arrived without the wrapper.`;
   } else {
-    item.text = `$(check) ${ok}/${total} skills`;
+    item.text = `$(check) ${throughCreel}/${total} skills`;
     item.tooltip = `Loaded through creel: ${names(turn.attached)}`;
   }
 }
@@ -1435,7 +1527,7 @@ function startAutoAudit(context, extensionDir) {
 
     const total = turn.attached.length;
     const message = missing.length
-      ? `${missing.length} of ${total} attached skill(s) were never loaded — ` +
+      ? `${missing.length} of ${total} attached skill(s) were not delivered — ` +
         missing.map((ref) => `#${ref.token}`).join(", ") +
         "."
       : `${bypassed.length} of ${total} attached skill(s) loaded outside creel — ` +
