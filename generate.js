@@ -347,13 +347,18 @@ function buildEntries(skills, prefix, variant = "must-keep") {
     tools.push({
       name: id,
       toolReferenceName: ref,
-      // Only ever a fallback label (`label = toolReferenceName ?? displayName`,
-      // and creel always sets toolReferenceName) plus the first line of the `#`
-      // widget's flyout, which composes `{source.label}: {displayName}` — so this
-      // reads "Creel: attach skills with #: caveman". The old " (skill)" suffix
-      // restated the group it already sits in. It stays a NAME, never prose: if
-      // toolReferenceName were ever absent, this becomes the label.
-      displayName: title,
+      // The `#` widget renders each row as `{source.label}: {displayName}`. The
+      // `{source.label}` half is the extension's own name ("Creel: attach skills
+      // with #") prepended by VS Code as attribution, so this field is the only
+      // text creel controls on that row — and a bare name there ("caveman") says
+      // nothing about when the skill applies. Carry the skill's own description,
+      // the same words the native `/` menu shows.
+      //
+      // Capped far tighter than userDescription, because this string has a second
+      // consumer: the chat's progress message is `Running ${displayName}` /
+      // `Ran ${displayName}`, and a tool reference's `fullName` is this too. A
+      // 900-char description would be a paragraph in a status line.
+      displayName: cap(summary, 100),
       // The description people read. VS Code renders `userDescription ??
       // modelDescription` everywhere a tool description appears — the `#` picker
       // row, the `Tools…` picker, the attachment-chip hover, the prompt-file
