@@ -1,6 +1,6 @@
 {
   "name": "creel",
-  "displayName": "Creel: attach skills with #",
+  "displayName": "Creel",
   "description": "Attach any number of agent skills to one Copilot chat message, anywhere in the message, with # references.",
   "version": "0.6.0",
   "publisher": "michael-obele",
