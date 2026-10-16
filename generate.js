@@ -61,6 +61,121 @@ function expandHome(folder) {
     : folder;
 }
 
+/** Collapse whitespace runs to single spaces. Every surface here is one line. */
+function oneLine(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Cut to `max` on a word boundary and mark the cut with an ellipsis.
+ *
+ * Shared by the description people read and the `When:` clause the model reads,
+ * so the two cannot disagree about what "capped" means. The `> 60` guard keeps a
+ * pathological first word from collapsing the result to a bare ellipsis.
+ */
+function cap(text, max) {
+  const s = String(text ?? "");
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const lastSpace = cut.lastIndexOf(" ");
+  return `${cut.slice(0, lastSpace > 60 ? lastSpace : max).trim()}…`;
+}
+
+/** Strip matching outer quotes, honouring YAML's escapes inside a double-quoted scalar. */
+function unquote(value) {
+  const v = String(value ?? "").trim();
+  if (v.length >= 2 && v.startsWith('"') && v.endsWith('"')) {
+    return v.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+  }
+  if (v.length >= 2 && v.startsWith("'") && v.endsWith("'")) {
+    return v.slice(1, -1).replace(/''/g, "'");
+  }
+  return v;
+}
+
+/**
+ * One YAML scalar, and the index of its last consumed line.
+ *
+ * A SKILL.md frontmatter is a handful of keys and only `description` matters.
+ * Its *style* decides whether it reads at all, and skill authors use every shape:
+ *
+ *   description: One line.        plain
+ *   description: >                folded — lines join with spaces
+ *     Two lines that join.
+ *   description: >-               folded, chomping stripped
+ *   description: |                literal — newlines kept
+ *
+ * The previous reader matched `^key:\s*(.+)$` per line, so a block scalar came
+ * back as the marker itself — `">"`. Eleven of 108 skills did, and they are the
+ * ones written with the longest, most trigger-rich descriptions.
+ *
+ * Folded and literal collapse identically here: every consumer wants one line (a
+ * picker row, a `When: …` clause, a payload label), so the block style never
+ * survives past this point. Chomping only affects trailing newlines, which the
+ * same collapse removes. That is a decision, not an oversight, and
+ * `tests/frontmatter.cjs` pins it so a later reader sees it was deliberate.
+ *
+ * @param {string[]} lines frontmatter lines, fences removed
+ * @param {number} index index of the `key:` line
+ * @param {string} inline everything after `key:` on that line
+ * @returns {{value: string, last: number}}
+ */
+function readScalar(lines, index, inline) {
+  const block = /^([>|])([-+]?)(\d*)\s*$/.exec(String(inline ?? "").trim());
+  if (!block) return { value: oneLine(unquote(inline)), last: index };
+
+  const declaredIndent = block[3];
+  const body = [];
+  let indent = declaredIndent ? Number(declaredIndent) : 0;
+  let last = index;
+
+  for (let i = index + 1; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) {
+      body.push("");
+      last = i;
+      continue;
+    }
+    const leading = line.length - line.trimStart().length;
+    if (!indent) {
+      if (!leading) break; // not indented: the next top-level key
+      indent = leading; // the first non-blank line sets the block's indent
+    }
+    if (leading < indent) break; // dedented: the block has ended
+    body.push(line.slice(indent));
+    last = i;
+  }
+
+  return { value: oneLine(body.join(" ")), last };
+}
+
+/**
+ * Parse the frontmatter block into a `key -> value` map of one-line strings.
+ *
+ * Only column-0 `key:` lines are read, so an indented line belongs either to a
+ * nested map (`metadata:`) or to a block scalar already consumed.
+ *
+ * @param {string} raw the whole file
+ * @returns {Record<string, string>}
+ */
+function parseFrontmatter(raw) {
+  const block = /^---\r?\n([\s\S]*?)\r?\n---/.exec(String(raw ?? ""));
+  if (!block) return {};
+
+  const lines = block[1].split(/\r?\n/);
+  const out = {};
+  for (let i = 0; i < lines.length; i++) {
+    const m = /^([A-Za-z][\w-]*):(.*)$/.exec(lines[i]);
+    if (!m) continue;
+    const { value, last } = readScalar(lines, i, m[2]);
+    out[m[1]] = value;
+    i = last;
+  }
+  return out;
+}
+
 /** Parse the YAML frontmatter of a SKILL.md without a YAML parser. */
 function readFrontmatter(file) {
   let raw;
@@ -69,26 +184,17 @@ function readFrontmatter(file) {
   } catch {
     return {};
   }
-  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw);
-  if (!match) {
-    return {};
-  }
+
+  const meta = parseFrontmatter(raw);
   const out = {};
-  for (const key of ["name", "description"]) {
-    const m = new RegExp(`^${key}:\\s*(.+)$`, "m").exec(match[1]);
-    if (m) {
-      out[key] = m[1].trim().replace(/^['"]|['"]$/g, "");
-    }
-  }
+  if (meta.name) out.name = meta.name;
+  if (meta.description) out.description = meta.description;
+
   // VS Code's own loader reads this flag and answers "Skill not found". Creel
   // cannot lift the block — and mimicking native means keeping the frontmatter
   // as-is — so it records the flag and telemetry reports the list. The skill
   // stays reachable through creel_loadSkill and through #.
-  const blocked = /^disable-model-invocation:\s*(.+)$/m.exec(match[1]);
-  if (
-    blocked &&
-    /^(true|yes|1)$/i.test(blocked[1].trim().replace(/^['"]|['"]$/g, ""))
-  ) {
+  if (/^(true|yes|1)$/i.test(meta["disable-model-invocation"] || "")) {
     out.blocked = true;
   }
   return out;
@@ -179,7 +285,9 @@ function scanSkills(folders) {
  * @returns {string} `When: …`, or "" when there is nothing to say
  */
 function whenClause(summary, max = 180) {
-  const text = String(summary || "").replace(/\s+/g, " ").trim();
+  const text = String(summary || "")
+    .replace(/\s+/g, " ")
+    .trim();
   if (!text) return "";
   if (text.length <= max) return `When: ${text}`;
   const cut = text.slice(0, max);
@@ -409,6 +517,10 @@ module.exports = {
   apply,
   reset,
   standingDescription,
+  parseFrontmatter,
+  readFrontmatter,
+  oneLine,
+  cap,
 };
 
 // CLI entry: node generate.js [--reset] [--force]
