@@ -257,56 +257,19 @@ function scanSkills(folders) {
  * and the anti-native sentence — and exists only as the control arm for the
  * comparison in docs/plans/2026-10-05-prompt-simplification-design.md, so it is
  * reachable only by setting `creel.wrapperVariant` to `baseline` on purpose.
- * Measured across the 101 registered tools: 9,949 chars full versus 3,106 lean,
- * about 1,711 tokens off every request whether or not anything is attached.
+ * Measured on 2026-10-05, across the then-101 registered tools: 9,949 chars
+ * full versus 3,106 lean, about 1,711 tokens off every request whether or not
+ * anything is attached.
  *
  * @param {string} variant `baseline` or the simplified shapes
  * @param {string} title frontmatter name, or the folder name
  * @param {string} ref the `#` reference, e.g. `skill-tdd`
  * @returns {string}
  */
-/**
- * A skill's own description, compressed to the words that decide a call.
- *
- * This is the routing signal. A skill's `modelDescription` is the ONLY text a
- * model sees before it chooses a tool — the `#` picker shows names, the hint
- * shows names, and `renderSkill` runs only after the call lands. Saying
- * `Load the "discretion" skill.` names the skill and nothing else, so the
- * model matches on the name alone. Appending the skill's own description puts
- * "use when the answer depends on weighing options" in front of it, which is
- * what the decision actually turns on.
- *
- * Capped, because ~106 of these sit in the standing tool list and are paid
- * for on every request. 180 chars ≈ 45 tokens each, front-loaded so the cut
- * lands after the trigger, not before it.
- *
- * @param {string} summary the skill's frontmatter description
- * @param {number} [max]
- * @returns {string} `When: …`, or "" when there is nothing to say
- */
-function whenClause(summary, max = 180) {
-  const text = oneLine(summary);
-  if (!text) return "";
-  return `When: ${cap(text, max)}`;
-}
-
-/**
- * The standing text for one skill tool: the frame for the wrapper variant,
- * plus the trigger words that let the model decide to call at all.
- *
- * @param {string} variant one of baseline | design-doc | must-keep | native
- * @param {string} title the skill's own name
- * @param {string} ref the `#` reference name
- * @param {string} [summary] the skill's frontmatter description
- * @returns {string}
- */
-function standingDescription(variant, title, ref, summary) {
-  const frame =
-    variant === "baseline"
-      ? `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`
-      : `Load the "${title}" skill.`;
-  const when = whenClause(summary);
-  return when ? `${frame} ${when}` : frame;
+function standingDescription(variant, title, ref) {
+  return variant === "baseline"
+    ? `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`
+    : `Load the "${title}" skill.`;
 }
 
 /** Turn collected skills into manifest entries plus the id -> skill map. */
@@ -371,14 +334,14 @@ function buildEntries(skills, prefix, variant = "must-keep") {
       // used to spend the first 20-45 chars of a 200-char budget on plumbing,
       // which cut the skill's own words short for 54 of the 108 skills.
       userDescription: summary,
-      // Paid for on every request — ~101 of these sit in the tool list at
-      // once, whether or not anything is attached, so this is the only text
-      // that can change the decision to call. The framing that shapes the
-      // payload is in renderSkill, after the call.
-      // Measured: a long BLOCKING/NEVER version changed nothing — but that
-      // tested imperative framing, not the skill's own trigger words, which
-      // are the content the routing decision needs.
-      modelDescription: standingDescription(variant, title, ref, summary),
+      // Paid for on every request — 115 of these sit in the tool list at once,
+      // whether or not anything is attached, so this is the only text that can
+      // change the decision to call. It is deliberately the name and nothing
+      // more: the skill's trigger words used to be appended here as a `When: …`
+      // clause costing 18,492 chars ≈ 4,623 tokens per request, and 79 of 115
+      // were truncated anyway. The description still reaches the model in the
+      // payload, after the call lands, which is where renderSkill puts it.
+      modelDescription: standingDescription(variant, title, ref),
       canBeReferencedInPrompt: true,
       icon: "$(lightbulb)",
       tags: ["skills"],
