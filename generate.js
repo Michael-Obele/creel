@@ -285,14 +285,9 @@ function scanSkills(folders) {
  * @returns {string} `When: …`, or "" when there is nothing to say
  */
 function whenClause(summary, max = 180) {
-  const text = String(summary || "")
-    .replace(/\s+/g, " ")
-    .trim();
+  const text = oneLine(summary);
   if (!text) return "";
-  if (text.length <= max) return `When: ${text}`;
-  const cut = text.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return `When: ${cut.slice(0, lastSpace > 60 ? lastSpace : max).trim()}…`;
+  return `When: ${cap(text, max)}`;
 }
 
 /**
@@ -338,7 +333,10 @@ function buildEntries(skills, prefix, variant = "must-keep") {
 
     const meta = readFrontmatter(skill.skillFile);
     const title = meta.name || skill.folderName;
-    const summary = (meta.description || `The ${title} skill.`).slice(0, 900);
+    // One cap for every consumer, applied here so the picker row, skills.json and
+    // the injected payload cannot disagree about where the description ends. The
+    // real corpus maxes out at 895 chars, so this only bounds pathological input.
+    const summary = cap(meta.description || `The ${title} skill.`, 900);
     // The id IS the `#` name. VS Code's tool-name pattern is
     // `^(?!copilot_|vscode_)[\w-]+$`, so hyphens are legal, and the model's
     // name-only tool-reference hint then matches the tool it must call.
@@ -350,7 +348,18 @@ function buildEntries(skills, prefix, variant = "must-keep") {
       name: id,
       toolReferenceName: ref,
       displayName: `${title} (skill)`,
-      userDescription: `Attach with #${ref}. ${summary}`.slice(0, 200),
+      // The description people read. VS Code renders `userDescription ??
+      // modelDescription` everywhere a tool description appears — the `#` picker
+      // row, the `Tools…` picker, the attachment-chip hover, the prompt-file
+      // hover — and the picker matches on it (`matchOnDescription`), so these
+      // words are simultaneously the label and the search key.
+      //
+      // No creel prefix: `#skill-caveman` is already the label on that same row,
+      // and "Creel: attach skills with #" is already the source attribution, so a
+      // third statement of the affordance is noise repeated 108 times. It also
+      // used to spend the first 20-45 chars of a 200-char budget on plumbing,
+      // which cut the skill's own words short for 54 of the 108 skills.
+      userDescription: summary,
       // Paid for on every request — ~101 of these sit in the tool list at
       // once, whether or not anything is attached, so this is the only text
       // that can change the decision to call. The framing that shapes the
