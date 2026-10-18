@@ -380,7 +380,9 @@ function parseTranscript(name, text) {
     } else if (record.type === "assistant.message") {
       // One assistant message can commit to several calls at once, so this
       // fans out rather than pushing a single event.
-      const requests = Array.isArray(data.toolRequests) ? data.toolRequests : [];
+      const requests = Array.isArray(data.toolRequests)
+        ? data.toolRequests
+        : [];
       for (const request of requests) {
         if (!request || !request.toolCallId) {
           continue;
@@ -553,8 +555,7 @@ function verdictFor(ref, turn) {
         // or configuration problem, not model discretion — which is why it is
         // reported apart from SKIPPED instead of inside it.
         out.verdict = "NOT-RUN";
-        out.detail =
-          `called ${id}, but the call never ran — nothing was executed`;
+        out.detail = `called ${id}, but the call never ran — nothing was executed`;
         return out;
       }
       if (creel.success === false) {

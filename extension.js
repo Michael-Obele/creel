@@ -1460,7 +1460,8 @@ function updateStatus(turn) {
   const bypassed = turn.attached.filter((ref) => ref.verdict === "NATIVE");
 
   if (never.length || broke.length || neverRan.length) {
-    item.text = `$(warning) ${arrived}/${total} skills`;    const parts = [];
+    item.text = `$(warning) ${arrived}/${total} skills`;
+    const parts = [];
     if (never.length) {
       parts.push(`never loaded: ${names(never)}`);
     }
