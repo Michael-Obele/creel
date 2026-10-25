@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1
+
+<!-- Describe this release before publishing. -->
+
+
 ## 0.6.0
 
 ### The tool is named what you type
