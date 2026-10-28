@@ -388,6 +388,23 @@ const LOADER_INDEX_BUDGET = 12000;
 const INDEX_TRIGGER_MAX = 90;
 
 /**
+ * The most `#` tools creel will emit, whatever the preset says.
+ *
+ * `hotSkills: ["*"]` — what preset `all` expands to — names every skill, and
+ * 142 tools is how the request got past the ceiling where the client stops
+ * making creel's tools available at all. Measured on 2026-10-28: ~28 of them
+ * reached the model, and every call past that slice came back `success:false`
+ * with no execution behind it (the audit's "called but never ran" rows). A `#`
+ * beyond the slice is worse than no `#`: the picker offers it, the call dies.
+ *
+ * So the surface degrades by usage instead of by name. Everything cut here is
+ * still reachable through the loader, which is the one tool that always
+ * survives. 20 is `creel.hotCount`'s own default, so this adds no new number.
+ * ponytail: fixed ceiling, raise it if the client's limit moves.
+ */
+const MAX_HOT_TOOLS = 20;
+
+/**
  * The loader's index: one line per skill, the richest shape that fits.
  *
  * Degradation is per line, not global. A skill whose line no longer fits falls
@@ -733,10 +750,11 @@ function hotSet(paths, options = {}) {
  * The three combinations worth naming, so the common choices are one dropdown
  * instead of two settings that only make sense together.
  *
- * `all` is the one that needs explaining: every skill gets a `#` tool and the
- * index budget goes to zero, because the tool names *are* the index once every
- * skill has one. Charging for trigger text on top of that buys autonomous
- * selection at 3.3k extra tokens.
+ * `all` is the one that needs explaining: every skill asks for a `#` tool, the
+ * most-used `MAX_HOT_TOOLS` get one, and the rest fall into the index — which
+ * keeps its budget, because those skills no longer have a tool name to serve as
+ * their index. It used to zero the budget on the theory that the tool names
+ * *were* the index, true only while every skill had a tool.
  *
  * `custom` is the default and means "use `creel.hotSkills`, `creel.hotCount` and
  * `creel.indexBudget` exactly as written".
@@ -747,7 +765,7 @@ const PRESETS = {
   // user's settings would let a pinned `hotSkills` list leak into `balanced` and
   // make the preset mean something different per machine.
   balanced: { hotSkills: [], hotCount: 20, indexBudget: 12000 },
-  all: { hotSkills: ["*"], hotCount: 0, indexBudget: 0 },
+  all: { hotSkills: ["*"], hotCount: 0, indexBudget: 12000 },
   loader: { hotSkills: [], hotCount: 0, indexBudget: 12000 },
 };
 
@@ -878,9 +896,12 @@ function apply(extensionDir, overrides = {}) {
   // the ones most likely to be picked unprompted, then whatever is left goes to
   // the index. Without this the hot set could spend past `indexBudget` and the
   // number the setting advertises would stop being the number paid.
+  // `hotSkills: ["*"]` (preset `all`) can name every skill. Only the most-used
+  // MAX_HOT_TOOLS get a tool of their own; the cap is why they exist at all.
+  const hotNames = hot.names.slice(0, MAX_HOT_TOOLS);
   let triggerBudget = budget;
   const hotTools = [];
-  for (const name of hot.names) {
+  for (const name of hotNames) {
     const id = idByName.get(name);
     const tool = id ? toolById.get(id) : null;
     if (!tool) continue;
@@ -897,7 +918,7 @@ function apply(extensionDir, overrides = {}) {
   // left out — their trigger already sits in the standing tool list — and the
   // index gets whatever the hot set could not afford.
   const rest = Object.values(paths).filter(
-    (skill) => !hot.names.includes(skill.name),
+    (skill) => !hotNames.includes(skill.name),
   );
   const index = buildIndex(rest, Math.max(0, triggerBudget));
 
@@ -922,9 +943,9 @@ function apply(extensionDir, overrides = {}) {
     cost: surfaceCost(emitted),
     index,
     hot: {
-      names: hot.names,
+      names: hotNames,
       source: hot.source,
-      counts: hot.names.map((name) => [name, hot.counts.get(name) || 0]),
+      counts: hotNames.map((name) => [name, hot.counts.get(name) || 0]),
     },
   };
 }
@@ -1045,6 +1066,7 @@ module.exports = {
   LOADER_NAME,
   LOADER_INDEX_BUDGET,
   INDEX_TRIGGER_MAX,
+  MAX_HOT_TOOLS,
   PRESETS,
   applyPreset,
   transcriptRoot,

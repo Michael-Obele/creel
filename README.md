@@ -142,7 +142,7 @@ make sense read together.
 | `creel.preset` | What you get | Tokens |
 | --- | --- | --- |
 | `balanced` | The top 20 skills by usage get `#`; the loader carries trigger text | ~4.1k |
-| `all` | Every skill gets `#`; the index spends nothing, because the tool names are the index | ~5.2k |
+| `all` | The most-used 20 skills get `#` (the cap — see below); the rest stay in the loader index | ~4.4k |
 | `loader` | No `#` at all; every skill is reached by name through `creel_loadSkill` | ~3.6k |
 | `custom` (default) | Whatever `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` say | varies |
 
@@ -153,6 +153,13 @@ Set `creel.preset` to `custom` to take control of the individual values.
 `all` is the setting behind `"creel.hotSkills": ["*"]` plus
 `"creel.indexBudget": 0` — the pair you would otherwise have to write out
 yourself. Those two lines still work on their own with `preset` left at `custom`.
+
+`all` no longer means every skill, because every skill does not work: past
+roughly 30 tools in one request the client stops making creel's tools available,
+so a `#` outside that slice is offered by the picker and dies on call. The scan
+keeps the most-used 20 and the loader carries the rest by name. It is therefore
+`balanced` with "ask for everything" spelled out: `["*"]` is trimmed by usage
+rather than by name.
 
 `loader` is the default surface because the per-skill tools bought almost
 nothing: 141 of them cost 18,441 bytes of schema and every one of their
