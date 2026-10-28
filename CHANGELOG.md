@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.7.0
+
+<!-- Describe this release before publishing. -->
+
+### One tool instead of one hundred and forty, and `#` kept
+
+The extension used to contribute a language-model tool per skill. At 141 skills
+that cost about 5.9k tokens on every request, and 18,441 bytes of it was schema
+whose entire description read `Load the "x" skill.` The skill's real description
+was in `userDescription`, which is user-facing and never sent to the model.
+
+It also stopped working. Three `#`-attached skills in one message came back as
+failed calls with no execution behind them — the model's own reasoning said
+"Three skills are disabled; only svelte-core-bestpractices loaded". A request
+carrying 141 creel tools plus the MCP servers passes the point where the client
+starts withholding tools.
+
+So the surface is now:
+
+- **`creel_loadSkill`**, one tool, whose description lists every scanned skill as
+  `- name — when to use it`. Nothing can be truncated out of it and nothing can
+  evict it. This is the route to a skill that has no `#`.
+- **A `#` tool per hot skill.** A `#` reference resolves only to a tool, so each
+  one costs a tool slot — but it does not have to cover the library. The hot set
+  is the skills you actually attach, counted from your own chat history
+  (`#skill-x` typed, a creel call, or the built-in `skill` tool), across every
+  workspace.
+- **One budget** for trigger text, `creel.indexBudget`, split between the two so
+  widening the hot set cannot quietly raise the bill.
+
+On a 141-skill machine: 3,599 tokens with no `#`, 4,120 with the top 15, 5,220
+with a `#` for every skill.
+
+### Settings
+
+- `creel.toolSurface` — `loader` (default) or `tools` for the old shape.
+- `creel.hotCount` — how many `#` references: `20` by default, `0` for none.
+- `creel.hotSkills` — pin the list; `["*"]` gives every skill one.
+- `creel.indexBudget` — trigger characters, shared by both channels.
+
+### Also
+
+- **Rescan after upgrading.** The shipped manifest carries an empty tool list, so
+  run **Creel: Scan skills** and reload to generate yours.
+- The hot set reads the newest ~64 MB of transcripts. Reading this machine's whole
+  archive (375 files, 279 MB) took 37 seconds; the capped read takes about one.
+- The scan now reports how many tools it wrote and what they cost, so the trade is
+  visible at the moment it is made.
+
 ## 0.6.1
 
 <!-- Describe this release before publishing. -->

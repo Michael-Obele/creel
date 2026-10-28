@@ -2,7 +2,7 @@
   "name": "creel",
   "displayName": "Creel",
   "description": "Attach any number of agent skills to one Copilot chat message, anywhere in the message, with # references.",
-  "version": "0.6.1",
+  "version": "0.7.0",
   "publisher": "michael-obele",
   "license": "MIT",
   "repository": {
@@ -53,6 +53,12 @@
         "title": "Scan skills",
         "category": "Creel",
         "shortTitle": "Scan skills"
+      },
+      {
+        "command": "creel.chooseSurface",
+        "title": "Choose tool surface",
+        "category": "Creel",
+        "shortTitle": "Tool surface"
       },
       {
         "command": "creel.audit",
@@ -143,6 +149,54 @@
           ],
           "default": "must-keep",
           "markdownDescription": "Which wrapper shape to hand the model when a skill is invoked. Read on every call, so changing it needs no reinstall and no reload. `must-keep` is what creel ships: one directive line, the applicability note and the file listing. `baseline` is the legacy shape, kept for comparison: directive, precedence paragraph, applicability note, file listing; `design-doc` is the minimal shape in `docs/plans/2026-10-05-prompt-simplification-design.md`; `native` reproduces the built-in skill tool's own result; `random` picks one of the four for the whole window and stamps it into every injection, which is what makes a per-variant comparison possible. Affects the wrapper only — the standing tool text follows it at the next **Creel: Scan skills**."
+        },
+        "creel.toolSurface": {
+          "type": "string",
+          "enum": [
+            "loader",
+            "tools"
+          ],
+          "default": "loader",
+          "markdownDescription": "What **Creel: Scan skills** writes into the tool list. `loader` ships one tool whose description carries every skill as `- name — when to use it`; it costs about 3.6k tokens per request (against 5.9k for the legacy surface) and nothing can be truncated out of it. `tools` restores the legacy one-tool-per-skill surface, which is the only shape that supports `#skill-name` attachments — it costs about 5.9k tokens per request and, at 141 skills, pushes the request past the client's tool ceiling, where the overflow stops being available to the model. Takes effect at the next **Creel: Scan skills**, then a reload."
+        },
+        "creel.indexBudget": {
+          "type": "number",
+          "default": 12000,
+          "minimum": 0,
+          "maximum": 40000,
+          "markdownDescription": "Characters the loader's index may spend on trigger phrases. Every skill is always listed by name, so nothing becomes unreachable when this is low — the budget only decides how many lines get `— when to use it` appended before the rest degrade to bare names. `12000` fits about 113 of 141 skills with a trigger at roughly 3.6k tokens per request; `0` lists names only at about 0.9k. Applies only when `creel.toolSurface` is `loader`, at the next **Creel: Scan skills**."
+        },
+        "creel.preset": {
+          "type": "string",
+          "enum": [
+            "custom",
+            "balanced",
+            "all",
+            "loader"
+          ],
+          "enumDescriptions": [
+            "Use `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` exactly as written.",
+            "The top 20 skills by how often you use them get a `#` reference, and the loader index carries trigger text. About 4.1k tokens per request.",
+            "Every skill gets a `#` reference and the index spends nothing, because the tool names are the index. About 5.2k tokens per request, and 141 tool slots.",
+            "No `#` references at all; every skill is reached through `creel_loadSkill`. About 3.6k tokens per request."
+          ],
+          "default": "custom",
+          "markdownDescription": "One dropdown for the whole tool surface, instead of setting `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` by hand. A preset **replaces** those three rather than merging with them, so `all` cannot end up half-applied. `custom` leaves them alone. **Creel: Choose tool surface** sets this, scans, and offers to reload. Takes effect at the next **Creel: Scan skills**."
+        },
+        "creel.hotCount": {
+          "type": "number",
+          "default": 20,
+          "minimum": 0,
+          "maximum": 100,
+          "markdownDescription": "How many skills get a `#` reference of their own. A `#` reference can only resolve to a tool, so each one costs a tool slot — and a request that carries past ~128 tools has some of them withheld from the model. Rather than one tool per skill, the top N **by how often you actually attach them** are chosen from your Copilot chat history, and everything else stays reachable through `creel_loadSkill`. `0` means no `#` at all. Ignored when `creel.hotSkills` is set. Applies at the next **Creel: Scan skills**, then a reload."
+        },
+        "creel.hotSkills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "Pin exactly which skills get a `#` reference, overriding `creel.hotCount`. Names are the skill's own (as in `~/.agents/skills/<name>`), and unknown names are ignored. `[\"*\"]` gives every scanned skill its own `#` tool, ordered by how often you use them so the trigger budget goes to the ones you reach for first. Leave empty to let usage decide."
         }
       }
     },

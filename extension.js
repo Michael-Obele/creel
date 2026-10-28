@@ -10,7 +10,7 @@
 const vscode = require("vscode");
 const fs = require("node:fs");
 const path = require("node:path");
-const { apply, LOADER_NAME } = require("./generate");
+const { apply, LOADER_NAME, PRESETS } = require("./generate");
 const {
   analyze,
   parseTranscript,
@@ -459,6 +459,79 @@ function loadSkills(extensionDir) {
   }
 }
 
+/**
+ * The three presets as a person would choose between them, with the cost stated
+ * next to the effect. `custom` is last because it is the state you end up in
+ * after adjusting the individual settings, not a recommendation.
+ */
+const PRESET_CHOICES = [
+  {
+    value: "balanced",
+    label: "Top skills only (# for the ones you use)",
+    detail: `About 4.1k tokens. ${PRESETS.balanced.hotCount} skills by measured usage get a # reference; the loader carries trigger text.`,
+  },
+  {
+    value: "all",
+    label: "Every skill gets a # reference",
+    detail:
+      "About 5.2k tokens and one tool slot per skill. Nothing is out of reach, but the request goes over the client's tool ceiling sooner.",
+  },
+  {
+    value: "loader",
+    label: "No # references (one tool only)",
+    detail:
+      "About 3.6k tokens. Every skill is reached through creel_loadSkill by name; nothing can be withheld or truncated.",
+  },
+  {
+    value: "custom",
+    label: "Custom (use my individual settings)",
+    detail:
+      "honour creel.hotSkills, creel.hotCount and creel.indexBudget exactly as written.",
+  },
+];
+
+/**
+ * Scan, then say what was written and what it costs.
+ *
+ * Shared by **Creel: Scan skills** and **Creel: Choose tool surface** so the
+ * reporting cannot drift between them: a preset that lands silently is
+ * indistinguishable from one that did nothing.
+ *
+ * @param {string} extensionDir
+ */
+async function scanAndReport(extensionDir) {
+  let result;
+  try {
+    result = apply(extensionDir);
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `Creel: could not scan skills. ${error.message}`,
+    );
+    return;
+  }
+
+  const detail = result.skipped.length
+    ? ` (${result.skipped.length} skipped as duplicates or reserved names)`
+    : "";
+  // The surface, in the words the decision was made in: how many tools the model
+  // now sees, what they cost, and whether `#` still works. A scan that silently
+  // changed the shape of every request would be the worst outcome of this.
+  const shape =
+    result.surface === "tools"
+      ? "one tool per skill"
+      : `one ${LOADER_NAME} tool plus ${result.hot.names.length} # reference(s)`;
+  const preset = result.preset === "custom" ? "" : `, preset "${result.preset}"`;
+  const choice = await vscode.window.showInformationMessage(
+    `Creel: ${result.count} skills reachable via ${shape} ` +
+      `(${result.cost.tools} tool(s), ~${result.cost.tokens} tokens/request${preset})${detail}. ` +
+      "Reload to apply.",
+    "Reload Window",
+  );
+  if (choice === "Reload Window") {
+    vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
 /* ------------------------------------------------------------------------ *
  * Developer plumbing.
  *
@@ -752,25 +825,46 @@ function activate(context) {
         }
       }
 
-      let result;
-      try {
-        result = apply(extensionDir);
-      } catch (error) {
-        vscode.window.showErrorMessage(
-          `Creel: could not scan skills. ${error.message}`,
-        );
-        return;
-      }
-      const detail = result.skipped.length
-        ? ` (${result.skipped.length} skipped as duplicates or reserved names)`
-        : "";
-      const choice = await vscode.window.showInformationMessage(
-        `Creel: ${result.count} skills are now #-referenceable${detail}. Reload to apply.`,
-        "Reload Window",
+      await scanAndReport(extensionDir);
+    }),
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand("creel.chooseSurface", async () => {
+      // One dropdown for a decision that is otherwise three settings that only
+      // make sense read together. `all` in particular is two values that must
+      // move as a pair: every skill gets a `#` tool *and* the index spends
+      // nothing, because the tool names are the index.
+      const current = vscode.workspace
+        .getConfiguration("creel")
+        .get("preset", "custom");
+      const picked = await vscode.window.showQuickPick(
+        PRESET_CHOICES.map((choice) => ({
+          label:
+            (choice.value === current ? "$(check) " : "     ") + choice.label,
+          description: choice.value === current ? "current" : "",
+          detail: choice.detail,
+          value: choice.value,
+        })),
+        {
+          title: "Creel: choose tool surface",
+          placeHolder: `Currently: ${current}`,
+          matchOnDetail: true,
+        },
       );
-      if (choice === "Reload Window") {
-        vscode.commands.executeCommand("workbench.action.reloadWindow");
-      }
+      if (!picked) return;
+
+      await vscode.workspace
+        .getConfiguration("creel")
+        .update(
+          "preset",
+          picked.value,
+          vscode.ConfigurationTarget.Global,
+        );
+
+      // Scan immediately: a preset without a rescan changes a setting and
+      // nothing else, which reads as "it did nothing".
+      await scanAndReport(extensionDir);
     }),
   );
 

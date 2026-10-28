@@ -363,24 +363,109 @@ function buildEntries(skills, prefix, variant = "must-keep") {
 const LOADER_NAME = "creel_loadSkill";
 
 /**
- * The loader's manifest entry.
+ * What the loader's index may spend, in characters, when `creel.indexBudget` is
+ * unset.
+ *
+ * The index is the only place the model learns a skill exists, so it is the one
+ * surface worth paying for — but it is paid on every request. Measured on
+ * 2026-10-25 across the then-141 skills:
+ *
+ *   every name, no trigger .........  3,079 bytes ≈ 0.9k tokens
+ *   every name + a 90-char trigger . 12,956 bytes ≈ 3.6k tokens (this default)
+ *   141 tools instead .............. 21,184 bytes ≈ 5.9k tokens, of which
+ *                                    18,441 bytes are per-skill schemas that say
+ *                                    nothing but `Load the "x" skill.`
+ *
+ * So the default is a third cheaper than the surface it replaced *and* carries
+ * the trigger words that surface threw away; dropping the budget to 0 makes it
+ * six times cheaper. Lower it to buy tokens back at the price of trigger
+ * coverage; at 0 the index is names only and every skill is still loadable,
+ * just not selectable from the text alone.
+ */
+const LOADER_INDEX_BUDGET = 12000;
+
+/** Longest trigger phrase per skill, before its line is trimmed to fit. */
+const INDEX_TRIGGER_MAX = 90;
+
+/**
+ * The loader's index: one line per skill, the richest shape that fits.
+ *
+ * Degradation is per line, not global. A skill whose line no longer fits falls
+ * back to its bare name rather than being dropped — a name is enough for the
+ * model to call the tool, while a missing skill is not findable at all. That is
+ * the difference between this index and VS Code's own `<skills>` block, which
+ * truncates to names with no `<file>` and then cannot resolve them.
+ *
+ * Trigger text is the skill's own description, capped. It is the only phrasing
+ * anyone has, and it is written for exactly this job.
+ *
+ * @param {Array<{name?: string, description?: string}>} skills
+ * @param {number} [budget] characters the trigger text may spend
+ * @returns {{text: string, withTrigger: number, bare: number, chars: number}}
+ */
+function buildIndex(skills, budget = LOADER_INDEX_BUDGET) {
+  const sorted = [...skills].sort((a, b) =>
+    (a.name || "").localeCompare(b.name || ""),
+  );
+  const lines = [];
+  let used = 0;
+  let withTrigger = 0;
+  let bare = 0;
+
+  for (const skill of sorted) {
+    if (!skill.name) continue;
+    const trigger = cap(oneLine(skill.description || ""), INDEX_TRIGGER_MAX);
+    const rich = trigger ? `- ${skill.name} — ${trigger}` : `- ${skill.name}`;
+    const poor = `- ${skill.name}`;
+    const fits = used + rich.length + 1 <= budget;
+    const line = fits ? rich : poor;
+    if (fits && trigger) withTrigger += 1;
+    else bare += 1;
+    used += line.length + 1;
+    lines.push(line);
+  }
+
+  return { text: lines.join("\n"), withTrigger, bare, chars: used };
+}
+
+/**
+ * The loader's manifest entry — one tool for the whole library.
  *
  * `canBeReferencedInPrompt: false` is the whole point. A referenceable tool is
  * an attachment: VS Code forces the call once the user types `#`, but the model
  * never sees it before that, so it cannot decide a skill applies and fetch it.
- * This one sits in the tool list permanently, and it is also the only route
- * into the skills carrying `disable-model-invocation: true`.
+ * This one sits in the tool list permanently, and it is also the only route into
+ * skills carrying `disable-model-invocation: true`.
  *
- * The name list is generated because the model has no other index into creel's
- * skills — the `<skills>` block VS Code prints lists only what its own loader
- * accepts. Names only: the description arrives in the payload, after the
- * decision to call, where it costs nothing extra.
+ * It used to be one of 142 entries, with 141 siblings that each carried nothing
+ * but a name in their description. Those are gone: a per-skill tool bought
+ * ~180 bytes of schema and no semantics, and 141 of them pushed the request
+ * past the ceiling where the client stops making tools available at all — which
+ * is why three skills in one message came back as `success:false` with no
+ * execution behind them. Trigger words live here now, where they cost the same
+ * bytes and are attached to a tool that cannot be evicted.
  *
- * @param {string[]} names skill names, already sorted
+ * @param {{text?: string}} index from {@link buildIndex}
+ * @param {{total?: number}} [options] how many skills were scanned, so an empty
+ *   index can be described accurately — it means "every one of them already has
+ *   its own tool", not "nothing was found"
  * @returns {object} a `contributes.languageModelTools` entry
  */
-function loaderEntry(names) {
-  const list = names.join(", ");
+function loaderEntry(index, options = {}) {
+  const text = (index && index.text) || "";
+  const total = Number.isFinite(options.total) ? options.total : null;
+  let tail;
+  if (text) {
+    tail = `\n\nAvailable skills, one per line as \`- name — when to use it\`:\n${text}`;
+  } else if (total) {
+    // No count here on purpose: `total` counts scanned paths, and two folders
+    // holding the same skill name collapse to one tool, so the two numbers can
+    // differ by one and a precise-looking figure would be wrong.
+    tail =
+      "\n\nEvery scanned skill already has its own tool. Use this one only to reach a skill by name when that tool is not in the list.";
+  } else {
+    tail = "\n\nNo skills have been scanned yet.";
+  }
   return {
     name: LOADER_NAME,
     displayName: "Load skill",
@@ -388,8 +473,8 @@ function loaderEntry(names) {
     modelDescription:
       "Load a skill's instructions by name, then follow them before continuing " +
       'with the task. Input: {"skill": "<name>"}. The name is the skill\'s own ' +
-      "name, not its # reference." +
-      (list ? `\n\nAvailable skills: ${list}` : ""),
+      "name, not a # reference." +
+      tail,
     canBeReferencedInPrompt: false,
     icon: "$(lightbulb)",
     tags: ["skills"],
@@ -407,11 +492,326 @@ function loaderEntry(names) {
 }
 
 /**
- * Write the manifest and the id -> path map next to this file.
- * @param {string} extensionDir the extension's own folder
- * @returns {{count: number, skipped: string[]}}
+ * What a tool list costs the model, in the shape VS Code actually forwards:
+ * name, description and JSON schema. Measured, not estimated — the loader shape
+ * exists on the claim that this number went down, so the scan reports it.
+ *
+ * @param {object[]} tools `contributes.languageModelTools`
+ * @returns {{tools: number, bytes: number, tokens: number}}
  */
-function apply(extensionDir) {
+function surfaceCost(tools) {
+  const bytes = (tools || []).reduce(
+    (total, tool) =>
+      total +
+      JSON.stringify({
+        name: tool.name,
+        description: tool.modelDescription || tool.userDescription || "",
+        parameters: tool.inputSchema,
+      }).length,
+    0,
+  );
+  // ~3.6 bytes per token is the ratio measured on these manifests; it is a
+  // guide for the report, never a budget input.
+  return { tools: (tools || []).length, bytes, tokens: Math.round(bytes / 3.6) };
+}
+
+/**
+ * Where VS Code keeps per-workspace chat transcripts.
+ *
+ * Machine-wide on purpose: the answer to "which skills do I actually attach"
+ * lives across every repo, not in whichever window happened to be open when the
+ * scan ran. Override with `CREEL_TRANSCRIPTS_DIR`, which is also how the test
+ * suite avoids reading real chats.
+ *
+ * @returns {string}
+ */
+function transcriptRoot() {
+  return process.env.CREEL_TRANSCRIPTS_DIR
+    ? process.env.CREEL_TRANSCRIPTS_DIR
+    : path.join(os.homedir(), ".config/Code/User/workspaceStorage");
+}
+
+/**
+ * Every `.jsonl` under `root`, oldest last.
+ *
+ * Two shapes appear in practice and both are handled: the real layout
+ * `<workspaceStorage>/<hash>/GitHub.copilot-chat/transcripts/*.jsonl`, and a
+ * flat folder of transcripts, which keeps fixtures honest without mirroring four
+ * directory levels in a temp dir. Unreadable folders are skipped, never thrown.
+ *
+ * Sorted newest first and capped, because this corpus is not small — 375 files
+ * and 279 MB on the machine this was written on, where reading all of it took 37
+ * seconds. Usage ranking does not need the whole archive: the last few dozen
+ * megabytes describe the same habits.
+ *
+ * @param {string} root
+ * @returns {string[]} absolute paths, newest first
+ */
+function transcriptFiles(root) {
+  const found = [];
+  const MAX_DEPTH = 4;
+  const MAX_FILES = 5000;
+
+  const walk = (dir, depth) => {
+    if (depth > MAX_DEPTH || found.length >= MAX_FILES) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // a missing or unreadable store is not an error
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full, depth + 1);
+      else if (entry.name.endsWith(".jsonl")) found.push(full);
+    }
+  };
+
+  walk(root, 0);
+
+  return found
+    .map((file) => {
+      try {
+        return { file, mtime: fs.statSync(file).mtimeMs };
+      } catch {
+        return { file, mtime: 0 };
+      }
+    })
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((entry) => entry.file);
+}
+
+/** Bytes of chat history {@link usageCounts} will read before it stops. */
+const USAGE_READ_BUDGET = 64 * 1024 * 1024;
+
+/** Lines that can carry a skill signal, used to skip parsing the rest. */
+const USAGE_LINE_MARKERS = [
+  '"user.message"',
+  '"toolRequests"',
+  '"tool.execution_start"',
+];
+
+/**
+ * How often each skill was attached or loaded, counted from transcripts.
+ *
+ * Three signals, because a skill can arrive three ways and each is evidence the
+ * skill is wanted: a `#skill-x` typed in a message, a creel `skill-x` tool call,
+ * and the built-in `skill` tool called with `{"skill":"x"}`. Tokens are resolved
+ * through an alias map (tool id, `#` reference, frontmatter name, folder name)
+ * so all three land on one skill.
+ *
+ * A transcript records no model and no error text, which does not matter here:
+ * the question is only what you reached for, not whether it worked.
+ *
+ * @param {string} root transcript dir, nested or flat
+ * @param {Map<string, string>} byAlias lowercase alias -> skill name
+ * @returns {Map<string, number>} skill name -> count
+ */
+function usageCounts(root, byAlias) {
+  const counts = new Map();
+  const note = (token) => {
+    const name = byAlias.get(String(token ?? "").trim().toLowerCase());
+    if (name) counts.set(name, (counts.get(name) || 0) + 1);
+  };
+
+  let budget = USAGE_READ_BUDGET;
+  for (const file of transcriptFiles(root)) {
+    if (budget <= 0) break;
+    let raw;
+    try {
+      budget -= fs.statSync(file).size;
+      raw = fs.readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    for (const line of raw.split("\n")) {
+      // Most lines are small events that cannot carry a skill. Checking for the
+      // three event shapes first keeps JSON.parse off roughly 95% of them, which
+      // is the difference between seconds and half a minute on a large archive.
+      if (!USAGE_LINE_MARKERS.some((marker) => line.includes(marker))) continue;
+      let event;
+      try {
+        event = JSON.parse(line);
+      } catch {
+        continue;
+      }
+      const data = event.data || {};
+      if (event.type === "user.message") {
+        // `#skill-tdd` typed into the box, which survives as plain text.
+        for (const match of String(data.content || "").matchAll(/#([\w-]+)/g)) {
+          note(match[1]);
+        }
+      } else if (event.type === "assistant.message") {
+        for (const request of data.toolRequests || []) {
+          note(request.name);
+          if (request.name === "skill") {
+            try {
+              note(JSON.parse(request.arguments || "{}").skill);
+            } catch {
+              // a malformed argument is not a usage signal
+            }
+          }
+        }
+      } else if (event.type === "tool.execution_start") {
+        if (data.toolName === "skill") note((data.arguments || {}).skill);
+        else note(data.toolName);
+      }
+    }
+  }
+
+  return counts;
+}
+
+/**
+ * Which skills earn a `#` tool of their own.
+ *
+ * `#name` resolves only to a tool with that `toolReferenceName` — VS Code's
+ * parser has no skill branch — so every `#` costs a tool slot in a request whose
+ * ceiling is 128 entries before the client starts withholding tools. One per
+ * skill cannot be the answer; a bounded set can, and the boundary should come
+ * from evidence rather than from the alphabet.
+ *
+ * `creel.hotSkills` wins outright when set, so the list can be pinned. Otherwise
+ * the top `count` by measured usage. A skill that has never been used never
+ * appears here, which is the point.
+ *
+ * @param {Record<string, {name?: string, reference?: string, path?: string}>} paths
+ * @param {{explicit?: string[], count?: number, root?: string}} [options]
+ * @returns {{names: string[], source: string, counts: Map<string, number>}}
+ */
+function hotSet(paths, options = {}) {
+  const explicit = Array.isArray(options.explicit) ? options.explicit : [];
+  const count = Number.isFinite(options.count) ? options.count : 20;
+
+  const byAlias = new Map();
+  const known = new Set();
+  for (const [id, skill] of Object.entries(paths || {})) {
+    const name = skill.name || id;
+    known.add(name);
+    const aliases = [
+      id,
+      skill.reference,
+      name,
+      skill.path ? path.basename(path.dirname(skill.path)) : "",
+    ];
+    for (const alias of aliases) {
+      if (alias) byAlias.set(String(alias).toLowerCase(), name);
+    }
+  }
+
+  if (explicit.length) {
+    // `["*"]` means every skill — the one word for "give me all of them".
+    if (explicit.some((name) => String(name).trim() === "*")) {
+      // Ordered by usage, not alphabetically, because the trigger budget is
+      // spent top-down: the skills you actually reach for should be the ones
+      // that keep a trigger when there are too many to give them all one.
+      const counts = usageCounts(options.root || transcriptRoot(), byAlias);
+      const names = [...known].sort(
+        (a, b) => (counts.get(b) || 0) - (counts.get(a) || 0) || a.localeCompare(b),
+      );
+      return { names, source: "setting (all)", counts };
+    }
+    const names = [];
+    for (const raw of explicit) {
+      const name = byAlias.get(String(raw).trim().toLowerCase()) || raw;
+      if (known.has(name) && !names.includes(name)) names.push(name);
+    }
+    return { names, source: "setting", counts: new Map() };
+  }
+
+  if (!count) return { names: [], source: "off", counts: new Map() };
+
+  const counts = usageCounts(options.root || transcriptRoot(), byAlias);
+  const names = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, count)
+    .map(([name]) => name);
+  return { names, source: "transcripts", counts };
+}
+
+/**
+ * The three combinations worth naming, so the common choices are one dropdown
+ * instead of two settings that only make sense together.
+ *
+ * `all` is the one that needs explaining: every skill gets a `#` tool and the
+ * index budget goes to zero, because the tool names *are* the index once every
+ * skill has one. Charging for trigger text on top of that buys autonomous
+ * selection at 3.3k extra tokens.
+ *
+ * `custom` is the default and means "use `creel.hotSkills`, `creel.hotCount` and
+ * `creel.indexBudget` exactly as written".
+ */
+const PRESETS = {
+  custom: {},
+  // Each preset names all three keys, including the empty ones. Merging over the
+  // user's settings would let a pinned `hotSkills` list leak into `balanced` and
+  // make the preset mean something different per machine.
+  balanced: { hotSkills: [], hotCount: 20, indexBudget: 12000 },
+  all: { hotSkills: ["*"], hotCount: 0, indexBudget: 0 },
+  loader: { hotSkills: [], hotCount: 0, indexBudget: 12000 },
+};
+
+/**
+ * Replace the per-setting values with a preset's, when one is chosen.
+ *
+ * A preset wins outright rather than merging, because a half-applied preset is
+ * the state nobody can reason about: `all` with the old `hotCount` still set
+ * would give a `#` tool for every skill *and* leave the index paying for
+ * triggers. Returning the preset name keeps the scan able to say which one ran.
+ *
+ * @param {Record<string, unknown>} settings
+ * @returns {{settings: Record<string, unknown>, preset: string}}
+ */
+function applyPreset(settings) {
+  const name = typeof settings.preset === "string" ? settings.preset : "";
+  const preset = PRESETS[name];
+  if (!preset) return { settings, preset: "custom" };
+  return { settings: { ...settings, ...preset }, preset: name };
+}
+
+/**
+ * A `#` tool's standing text: the skill's name and its trigger.
+ *
+ * The trigger is deliberate. A referenceable tool is in the standing tool list
+ * whether or not anything is attached, so a hot skill is also one the model can
+ * pick on its own — and it should be able to tell when. This is the same text
+ * the loader index would have carried, which is why the index omits hot skills
+ * instead of paying for them twice.
+ *
+ * @param {{name: string, description?: string}} skill
+ * @returns {string}
+ */
+function hotDescription(skill) {
+  // Descriptions usually end in a full stop; dropping it avoids `..` when the
+  // sentence here adds its own.
+  const trigger = cap(oneLine(skill.description || ""), INDEX_TRIGGER_MAX).replace(
+    /\.+$/,
+    "",
+  );
+  return `Load the "${skill.name}" skill${trigger ? ` — ${trigger}` : ""}.`;
+}
+
+/**
+ * Write the manifest and the id -> path map next to this file.
+ *
+ * `creel.toolSurface` decides the shape:
+ *
+ *  - `loader` (default) one tool for the whole library, plus one `#` tool for
+ *    each skill in the hot set. Every skill is findable by name; the ones you
+ *    actually use are also attachable by `#`.
+ *  - `tools`  the legacy one-tool-per-skill surface, kept because a comparison
+ *    needs both arms. Costs ~5.9k tokens and is what put the request over the
+ *    client's tool ceiling.
+ *
+ * @param {string} extensionDir the extension's own folder
+ * @param {Record<string, unknown>} [overrides] settings to use instead of the
+ *   extension host's — the CLI passes the user's `settings.json` here, because
+ *   `require("vscode")` throws outside the host and a CLI scan would otherwise
+ *   silently ignore every `creel.*` setting and produce a different manifest
+ *   from the same install
+ * @returns {{count: number, skipped: string[], surface: string, cost: object, index: object, hot: object}}
+ */
+function apply(extensionDir, overrides = {}) {
   const manifestPath = path.join(extensionDir, "package.json");
   const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 
@@ -420,13 +820,31 @@ function apply(extensionDir) {
     settings.prefix = readConfiguredPrefix();
     settings.folders = readConfiguredFolders();
     settings.variant = readConfiguredVariant();
+    settings.surface = readConfiguredToolSurface();
+    settings.indexBudget = readConfiguredIndexBudget();
+    settings.hotSkills = readConfiguredHotSkills();
+    settings.hotCount = readConfiguredHotCount();
+    settings.preset = readConfiguredPreset();
   } catch {
     // Settings are unavailable outside the extension host; use defaults.
   }
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value !== undefined) settings[key] = value;
+  }
 
-  const prefix = settings.prefix ?? "skill-";
-  const variant = settings.variant ?? "must-keep";
-  const folders = settings.folders ?? [
+  const { settings: resolved, preset } = applyPreset(settings);
+  const prefix = resolved.prefix ?? "skill-";
+  const variant = resolved.variant ?? "must-keep";
+  const surface = resolved.surface === "tools" ? "tools" : "loader";
+  const configured =
+    Number.isFinite(resolved.indexBudget) && resolved.indexBudget >= 0
+      ? resolved.indexBudget
+      : LOADER_INDEX_BUDGET;
+  // In `tools` mode every skill already has a tool whose name is the index, so
+  // trigger text there would be bought twice. Names only, which keeps the legacy
+  // arm at the cost it has today instead of quietly raising it.
+  const budget = surface === "tools" ? 0 : configured;
+  const folders = resolved.folders ?? [
     "~/.agents/skills",
     "~/.claude/skills",
     "~/.copilot/skills",
@@ -443,18 +861,72 @@ function apply(extensionDir) {
     JSON.stringify(paths, null, "\t") + "\n",
   );
 
+  // Which skills get a `#` tool of their own. Computed before the index so the
+  // index can leave them out — a hot skill already carries its trigger in the
+  // standing tool list, and paying for it twice is how the bill got to 5.9k.
+  const hot = hotSet(paths, {
+    explicit: resolved.hotSkills,
+    count: resolved.hotCount,
+  });
+
+  const idByName = new Map();
+  for (const [id, skill] of Object.entries(paths)) {
+    if (skill.name && !idByName.has(skill.name)) idByName.set(skill.name, id);
+  }
+  const toolById = new Map(tools.map((tool) => [tool.name, tool]));
+  // One trigger budget, spent in rank order: hot skills first because they are
+  // the ones most likely to be picked unprompted, then whatever is left goes to
+  // the index. Without this the hot set could spend past `indexBudget` and the
+  // number the setting advertises would stop being the number paid.
+  let triggerBudget = budget;
+  const hotTools = [];
+  for (const name of hot.names) {
+    const id = idByName.get(name);
+    const tool = id ? toolById.get(id) : null;
+    if (!tool) continue;
+    const plain = `Load the "${name}" skill.`;
+    const rich = hotDescription(paths[id]);
+    const extra = rich.length - plain.length;
+    const afford = extra > 0 && triggerBudget >= extra;
+    if (afford) triggerBudget -= extra;
+    hotTools.push({ ...tool, modelDescription: afford ? rich : plain });
+  }
+
+  // The index is built from skills.json rather than from `tools`, because in
+  // `loader` mode there are no per-skill tools to read names off. Hot skills are
+  // left out — their trigger already sits in the standing tool list — and the
+  // index gets whatever the hot set could not afford.
+  const rest = Object.values(paths).filter(
+    (skill) => !hot.names.includes(skill.name),
+  );
+  const index = buildIndex(rest, Math.max(0, triggerBudget));
+
   // The loader is emitted only when there is something to load, so a scan that
   // finds nothing still leaves the manifest empty — which is how the extension
   // tells the user to scan in the first place.
-  const names = [...new Set(Object.values(paths).map((skill) => skill.name))]
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  manifest.contributes.languageModelTools = tools.length
-    ? [loaderEntry(names), ...tools]
-    : [];
+  const loader = loaderEntry(index, { total: Object.keys(paths).length });
+  const emitted = !Object.keys(paths).length
+    ? []
+    : surface === "tools"
+      ? [loader, ...tools]
+      : [loader, ...hotTools];
+
+  manifest.contributes.languageModelTools = emitted;
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, "\t") + "\n");
 
-  return { count: tools.length, skipped };
+  return {
+    count: tools.length,
+    skipped,
+    surface,
+    preset,
+    cost: surfaceCost(emitted),
+    index,
+    hot: {
+      names: hot.names,
+      source: hot.source,
+      counts: hot.names.map((name) => [name, hot.counts.get(name) || 0]),
+    },
+  };
 }
 
 /** Read `creel.referencePrefix` if we are running inside VS Code. */
@@ -473,6 +945,83 @@ function readConfiguredVariant() {
 function readConfiguredFolders() {
   const vscode = require("vscode");
   return vscode.workspace.getConfiguration("creel").get("skillFolders");
+}
+
+/** Read `creel.toolSurface` if we are running inside VS Code. */
+function readConfiguredToolSurface() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("toolSurface");
+}
+
+/** Read `creel.indexBudget` if we are running inside VS Code. */
+function readConfiguredIndexBudget() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("indexBudget");
+}
+
+/** Read `creel.hotSkills` if we are running inside VS Code. */
+function readConfiguredHotSkills() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("hotSkills");
+}
+
+/** Read `creel.hotCount` if we are running inside VS Code. */
+function readConfiguredHotCount() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("hotCount");
+}
+
+/** Read `creel.preset` if we are running inside VS Code. */
+function readConfiguredPreset() {
+  const vscode = require("vscode");
+  return vscode.workspace.getConfiguration("creel").get("preset");
+}
+
+/**
+ * The `creel.*` settings as written on disk, for a scan run outside the host.
+ *
+ * A CLI scan and the **Creel: Scan skills** command must produce the same
+ * manifest from the same install, and they only do if the CLI can see the
+ * settings. VS Code's `settings.json` is JSONC, so comments and trailing commas
+ * are removed before parsing. Anything unreadable yields nothing, which leaves
+ * the defaults in place rather than failing a scan.
+ *
+ * @returns {Record<string, unknown>}
+ */
+function readUserSettings() {
+  const file = path.join(os.homedir(), ".config/Code/User/settings.json");
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    return {};
+  }
+  const jsonc = raw
+    .replace(/^\s*\/\/.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/,(\s*[}\]])/g, "$1");
+  let parsed;
+  try {
+    parsed = JSON.parse(jsonc);
+  } catch {
+    return {};
+  }
+
+  const out = {};
+  const map = {
+    "creel.referencePrefix": "prefix",
+    "creel.skillFolders": "folders",
+    "creel.wrapperVariant": "variant",
+    "creel.toolSurface": "surface",
+    "creel.indexBudget": "indexBudget",
+    "creel.hotSkills": "hotSkills",
+    "creel.hotCount": "hotCount",
+    "creel.preset": "preset",
+  };
+  for (const [key, name] of Object.entries(map)) {
+    if (parsed[key] !== undefined) out[name] = parsed[key];
+  }
+  return out;
 }
 
 /**
@@ -494,9 +1043,21 @@ function reset(extensionDir) {
 module.exports = {
   RESERVED,
   LOADER_NAME,
+  LOADER_INDEX_BUDGET,
+  INDEX_TRIGGER_MAX,
+  PRESETS,
+  applyPreset,
+  transcriptRoot,
+  transcriptFiles,
+  usageCounts,
+  hotSet,
+  hotDescription,
+  readUserSettings,
   scanSkills,
   buildEntries,
+  buildIndex,
   loaderEntry,
+  surfaceCost,
   apply,
   reset,
   standingDescription,
@@ -526,18 +1087,44 @@ if (require.main === module) {
     console.error(
       "Creel: refusing to write a skill list into the repo.\n" +
         "Run the generator in the installed copy instead:\n" +
-        "  node ~/.vscode/extensions/michael-obele.creel-0.6.1/generate.js\n" +
+        "  node ~/.vscode/extensions/michael-obele.creel-0.7.0/generate.js\n" +
         "Pass --force only if you really mean to commit a skill list.",
     );
     process.exit(1);
   }
 
-  const { count, skipped } = apply(__dirname);
-  console.log(`Creel: ${count} skills are now #-referenceable.`);
+  const { count, skipped, surface, preset, cost, index, hot } = apply(
+    __dirname,
+    readUserSettings(),
+  );
+  if (preset !== "custom") {
+    console.log(`Creel: preset "${preset}" is in charge of the hot set and budget.`);
+  }
+  console.log(
+    `Creel: ${count} skills reachable through ${LOADER_NAME} ` +
+      `(${index.withTrigger} with a trigger line, ${index.bare} name only).`,
+  );
+  // A hot set can be every skill, and printing 140 names buries the numbers that
+  // matter. Show the head of the ranked list and count the rest.
+  const shown = hot.names.slice(0, 8);
+  const more = hot.names.length - shown.length;
+  const listed = shown
+    .map((name, i) => (hot.counts[i][1] ? `${name}(${hot.counts[i][1]})` : name))
+    .join(", ");
+  console.log(
+    `Creel: ${hot.names.length} skill(s) get a # reference, ` +
+      `${hot.source === "transcripts" ? "chosen by how often you use them" : hot.source}` +
+      (hot.names.length ? `: ${listed}${more > 0 ? `, … ${more} more` : ""}` : "."),
+  );
+  console.log(
+    `Creel: tool surface = ${cost.tools} tool(s), ${cost.bytes} bytes ≈ ` +
+      `${cost.tokens} tokens per request.`,
+  );
+  if (surface === "tools") {
+    console.log("Creel: legacy surface — every skill has its own tool.");
+  }
   for (const line of skipped) {
     console.log(`  skipped ${line}`);
   }
-  console.log(
-    "Reload VS Code (Developer: Reload Window), then type # in chat.",
-  );
+  console.log("Reload VS Code (Developer: Reload Window) to pick this up.");
 }

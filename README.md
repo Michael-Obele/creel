@@ -68,7 +68,7 @@ Installed from a packaged `.vsix`? The tool list starts empty on purpose. Run **
 | Attach several              | Keep adding them. Only exact duplicates are collapsed                                                                                               |
 | Attach mid-message          | Yes. References sit wherever you put them                                                                                                           |
 | Re-scan after adding skills | **Creel: Scan skills**, then reload                                                                                                                 |
-| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.6.1/generate.js`                                                                                   |
+| Re-scan from a terminal     | `node ~/.vscode/extensions/michael-obele.creel-0.7.0/generate.js`                                                                                   |
 
 ## Where it comes from
 
@@ -123,17 +123,97 @@ The scanner:
 - De-duplicates by real path. `~/.claude/skills/<name>` is usually a symlink to `~/.agents/skills/<name>`, and `~/.copilot/skills` often holds real copies, so one skill can otherwise show up three times.
 - Skips names already taken by built-in tools. A folder called `rename`, `todo`, `wrangler` or `skill` still works through `/name` and on-demand loading; it just does not take a `#` entry that would shadow a built-in.
 
+## Tool surface
+
+Creel can put its skills in the model's tool list two ways. `creel.toolSurface`
+decides, at scan time.
+
+| Value | Shape | Cost with 141 skills | `#skill-x` |
+| --- | --- | --- | --- |
+| `loader` (default) | one `creel_loadSkill`, plus one `#` tool per hot skill | ~4.1k tokens (15 hot) | for the hot set |
+| `tools` | one tool per skill, plus the loader | ~5.9k tokens | for all |
+
+### Pick a preset, don't wire the settings by hand
+
+**Creel: Choose tool surface** from the command palette sets `creel.preset`,
+scans, and offers to reload. One dropdown instead of three settings that only
+make sense read together.
+
+| `creel.preset` | What you get | Tokens |
+| --- | --- | --- |
+| `balanced` | The top 20 skills by usage get `#`; the loader carries trigger text | ~4.1k |
+| `all` | Every skill gets `#`; the index spends nothing, because the tool names are the index | ~5.2k |
+| `loader` | No `#` at all; every skill is reached by name through `creel_loadSkill` | ~3.6k |
+| `custom` (default) | Whatever `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` say | varies |
+
+A preset **replaces** those three settings rather than merging with them, so
+`all` cannot end up half-applied, and a pinned list cannot leak into `balanced`.
+Set `creel.preset` to `custom` to take control of the individual values.
+
+`all` is the setting behind `"creel.hotSkills": ["*"]` plus
+`"creel.indexBudget": 0` — the pair you would otherwise have to write out
+yourself. Those two lines still work on their own with `preset` left at `custom`.
+
+`loader` is the default surface because the per-skill tools bought almost
+nothing: 141 of them cost 18,441 bytes of schema and every one of their
+descriptions said only `Load the "x" skill.` At that size the request also went
+past the ceiling where the client stops making tools available, and skills the
+model did call came back as failures with no execution behind them.
+
+Every skill is listed inside the loader's description as `- name — when to use
+it`, so the model can find any of them on its own. A `#` reference cannot work
+that way — it resolves only to a tool, so it costs a tool slot — but it does not
+need to cover the whole library.
+
+### The hot set
+
+The top skills by **how often you actually attach them** get a `#` tool of their
+own. The count comes from your Copilot chat history: `#skill-x` typed in a
+message, a creel `skill-x` call, and the built-in `skill` tool all count, resolved
+onto the same skill.
+
+Measured on this machine, the 15 most-used skills cost 521 tokens:
+
+| `creel.hotCount` | `#` tools | tokens |
+| --- | --- | --- |
+| `0` | 0 | 3,599 |
+| `10` | 10 | 3,946 |
+| `20` (default) | 15 | 4,120 |
+
+`creel.hotSkills` pins the list instead of deriving it, and `["*"]` means every
+skill — ordered by usage, so the trigger budget still goes to the ones you reach
+for first. A skill you have never used is never hot on its own — that is the
+point, not an oversight.
+
+**Every skill is reachable whether or not it is hot.** The hot set decides which
+ones get a `#` chip; the loader index lists all of them by name. `#` for all 141 is
+one preset away (`creel.preset: "all"`) and costs about 5.2k tokens without
+triggers — but it puts 141 tools back into a request that also carries ~91 MCP
+tools and ~43 built-ins, and that count is what makes the client withhold tools.
+Cover the library with `#` with an eye on that total.
+
+Only the newest ~64 MB of chat history is read (about a second), because the
+ranking does not need an archive: on this machine that is 375 files and 279 MB,
+which took 37 seconds to read in full.
+
+`creel.indexBudget` (default `12000`) caps the trigger text both channels may
+spend, together. Every skill is always listed by name, so a low budget never
+makes one unreachable — it only stops the model from recognising which one
+applies from the text alone. `0` gives names only at about 0.9k tokens.
+
 ## Letting the model choose the skill
 
-Typing `#skill-x` **forces** the call. Creel also ships `creel_loadSkill`, one tool
-the model can call on its own:
+In `loader` mode the model calls `creel_loadSkill`. In `tools` mode typing
+`#skill-x` also **forces** the call, and the loader is the fallback:
 
-- It is contributed with `canBeReferencedInPrompt: false`, so unlike the 100-odd
-  referenceable tools it sits in the model's tool list permanently. One entry, not
-  102 — the `#` picker still lists every skill.
-- Its `modelDescription` carries a generated, names-only list of every scanned
-  skill. That list is the model's only index into creel: the `<skills>` block VS
-  Code prints lists only what its own loader accepts.
+- It is contributed with `canBeReferencedInPrompt: false`, so it is always the
+  one entry in the model's tool list that no `#` can shadow. In `tools` mode the
+  `#` picker still lists every skill alongside it.
+- Its `modelDescription` carries a generated index of every scanned skill, one
+  line each. That index is the model's only complete route into creel: the
+  `<skills>` block VS Code prints truncates to roughly the first 38 names on a
+  machine with this many skills, and the remainder cannot be resolved by the
+  built-in `skill` tool at all.
 - It is the **only** route into skills whose frontmatter sets
   `disable-model-invocation: true` (23 on this machine, including `ultrathink` and
   `implement`). VS Code's loader honours that flag and answers "Skill not found".
@@ -148,6 +228,11 @@ the five largest payloads, and anything it could not attribute. Set
 
 | Setting                 | Default                                                     | Purpose                                                                                                                                                                                                     |
 | ----------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `creel.preset`          | `custom`                                                    | One dropdown for the whole surface: `balanced`, `all`, `loader`, or `custom`. Replaces the three settings below. See [Pick a preset](#pick-a-preset-dont-wire-the-settings-by-hand).                                            |
+| `creel.toolSurface`     | `loader`                                                    | `loader` = one tool for the whole library plus a `#` tool per hot skill. `tools` = one tool per skill. See [Tool surface](#tool-surface).                                                                     |
+| `creel.hotCount`        | `20`                                                        | How many skills get a `#` reference of their own, chosen by how often you use them. `0` means no `#`. Overridden by `creel.hotSkills`.                                                                       |
+| `creel.hotSkills`       | `[]`                                                        | Pin exactly which skills get a `#` reference (`["*"]` = all). Empty lets usage decide.                                                                                                                      |
+| `creel.indexBudget`     | `12000`                                                     | Characters both the loader index and the hot `#` tools may spend on trigger phrases, together. Names are always complete.                                                                                   |
 | `creel.referencePrefix` | `skill-`                                                    | Prefix on every `#` name. This keeps a skill apart from an MCP server that shares its name, such as the `sepia` skill and the `sepia` MCP server, or `playwright`, or `exa`. Set it to `""` for bare names. |
 | `creel.skillFolders`    | `~/.agents/skills`, `~/.claude/skills`, `~/.copilot/skills` | Where to look for `<name>/SKILL.md`. Supports `~/`.                                                                                                                                                         |
 
@@ -159,6 +244,7 @@ Click it for the dashboard: one row per attached skill with its verdict and the 
 
 | Command                       | What it does                                                                                                                                  |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Creel: Choose tool surface** | Pick `balanced`, `all`, `loader` or `custom`, scan, and reload. The fastest way to change how many tools creel costs you.                  |
 | **Creel: Check last message** | Runs the audit now and reports the last message's verdicts.                                                                                   |
 | **Creel: Audit report**       | Writes the full report to `audit.md` in this workspace's storage and opens it. The path is also in the dashboard, ready to paste to an agent. |
 
@@ -167,7 +253,8 @@ A message that has no tool call recorded yet is not reported as a miss. Creel re
 ## Limits
 
 - A reference makes the model **call** the tool. It is not a silent paste of the file.
-- The 100-odd `#` tools stay referenceable and therefore stay out of the model's tool list — that is deliberate, so they cost nothing per request. Reaching a skill without a `#` goes through `creel_loadSkill` instead: one entry, always visible.
+- Referenceable tools are enabled by default in the agent panel, so in `tools` mode they do appear in the model's tool list and do cost tokens on every request. The README used to claim otherwise; measurement says 141 tools ≈ 5.9k tokens. `loader` mode exists because that bill bought almost no information.
+- The local `<skills>` roster is capped by VS Code at 15,000 characters of descriptions, and the names past that cap cannot be resolved by the built-in `skill` tool. On a machine with ~140 skills that is roughly the first 38 names. Creel's loader index is the only complete list.
 - Personal skills only. The manifest is static, so it cannot vary per workspace, and that leaves `.github/skills` out.
 - Everything you attach lands in context. Ten skills means ten skill bodies, so two to five is a sane range.
 - A version bump needs a folder rename, because VS Code puts the version in the extension folder name.
@@ -180,7 +267,7 @@ The committed `package.json` ships `"languageModelTools": []` on purpose, so no 
 $ node generate.js
 Creel: refusing to write a skill list into the repo.
 Run the generator in the installed copy instead:
-  node ~/.vscode/extensions/michael-obele.creel-0.6.1/generate.js
+  node ~/.vscode/extensions/michael-obele.creel-0.7.0/generate.js
 Pass --force only if you really mean to commit a skill list.
 ```
 
