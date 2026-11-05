@@ -248,6 +248,29 @@ function scanSkills(folders) {
 }
 
 /**
+ * The second route to the same file, stated on every model-facing surface.
+ *
+ * A `#` reference is a hint, not a guarantee: the audit on 2026-11-05 recorded
+ * 7 skills attached with `#`, 2 loaded through creel, 2 more that errored on a
+ * lookup and were never retried, and 3 that no tool read at all. The model has
+ * exactly one resource that always works — it can read a file — and every
+ * skill IS a file with an absolute path. So the path is stated up front and the
+ * description says what to do when the call does not land.
+ *
+ * It stays a fallback, never a substitute: the call is still the first thing
+ * asked for, and this sentence only says what to do next. It names no other
+ * tool id (standing rule, Michael, 2026-10-05: model-facing strings describe
+ * what creel's own tool does and never argue against another loader).
+ *
+ * @param {string} [skillFile] absolute path to the skill's own SKILL.md
+ * @returns {string} one leading-space sentence, or `""` when there is no path
+ */
+function readFallback(skillFile) {
+  if (!skillFile) return "";
+  return ` If this call fails, read ${skillFile} and follow it.`;
+}
+
+/**
  * The standing text for one tool: the whole argument for calling it, and the
  * only surface paid for on every request.
  *
@@ -261,15 +284,20 @@ function scanSkills(folders) {
  * full versus 3,106 lean, about 1,711 tokens off every request whether or not
  * anything is attached.
  *
+ * `baseline` deliberately does NOT get {@link readFallback}: it exists to be
+ * measured against, byte for byte, so it keeps the wording creel shipped before
+ * any of this.
+ *
  * @param {string} variant `baseline` or the simplified shapes
  * @param {string} title frontmatter name, or the folder name
  * @param {string} ref the `#` reference, e.g. `skill-tdd`
+ * @param {string} [skillFile] absolute path to the skill's SKILL.md
  * @returns {string}
  */
-function standingDescription(variant, title, ref) {
+function standingDescription(variant, title, ref, skillFile) {
   return variant === "baseline"
     ? `Load the "${title}" skill for #${ref}. Use this tool, not the generic skill tool.`
-    : `Load the "${title}" skill.`;
+    : `Load the "${title}" skill.${readFallback(skillFile)}`;
 }
 
 /** Turn collected skills into manifest entries plus the id -> skill map. */
@@ -341,7 +369,12 @@ function buildEntries(skills, prefix, variant = "must-keep") {
       // clause costing 18,492 chars ≈ 4,623 tokens per request, and 79 of 115
       // were truncated anyway. The description still reaches the model in the
       // payload, after the call lands, which is where renderSkill puts it.
-      modelDescription: standingDescription(variant, title, ref),
+      modelDescription: standingDescription(
+        variant,
+        title,
+        ref,
+        skill.skillFile,
+      ),
       canBeReferencedInPrompt: true,
       icon: "$(lightbulb)",
       tags: ["skills"],
@@ -463,14 +496,27 @@ function buildIndex(skills, budget = LOADER_INDEX_BUDGET) {
  * bytes and are attached to a tool that cannot be evicted.
  *
  * @param {{text?: string}} index from {@link buildIndex}
- * @param {{total?: number}} [options] how many skills were scanned, so an empty
- *   index can be described accurately — it means "every one of them already has
- *   its own tool", not "nothing was found"
+ * @param {{total?: number, folders?: string[]}} [options] how many skills were
+ *   scanned, so an empty index can be described accurately — it means "every
+ *   one of them already has its own tool", not "nothing was found" — and the
+ *   roots they were scanned in, so the read fallback can name where the files
+ *   really are
  * @returns {object} a `contributes.languageModelTools` entry
  */
 function loaderEntry(index, options = {}) {
   const text = (index && index.text) || "";
   const total = Number.isFinite(options.total) ? options.total : null;
+  // The loader is the only route into a skill with no `#` tool of its own, so
+  // it is the only place that can state the fallback for them — one sentence
+  // and three roots, paid once, instead of a path per index line.
+  const folders = Array.isArray(options.folders)
+    ? options.folders.filter(Boolean)
+    : [];
+  const fallback = folders.length
+    ? ` Each skill is a folder holding a SKILL.md under ${folders.join(", ")}: ` +
+      "if this call fails, read that file with the read tool and follow it."
+    : " If this call fails, read the skill's own SKILL.md with the read tool " +
+      "and follow it.";
   let tail;
   if (text) {
     tail = `\n\nAvailable skills, one per line as \`- name — when to use it\`:\n${text}`;
@@ -491,6 +537,7 @@ function loaderEntry(index, options = {}) {
       "Load a skill's instructions by name, then follow them before continuing " +
       'with the task. Input: {"skill": "<name>"}. The name is the skill\'s own ' +
       "name, not a # reference." +
+      fallback +
       tail,
     canBeReferencedInPrompt: false,
     icon: "$(lightbulb)",
@@ -796,7 +843,7 @@ function applyPreset(settings) {
  * the loader index would have carried, which is why the index omits hot skills
  * instead of paying for them twice.
  *
- * @param {{name: string, description?: string}} skill
+ * @param {{name: string, description?: string, path?: string}} skill
  * @returns {string}
  */
 function hotDescription(skill) {
@@ -806,7 +853,7 @@ function hotDescription(skill) {
     /\.+$/,
     "",
   );
-  return `Load the "${skill.name}" skill${trigger ? ` — ${trigger}` : ""}.`;
+  return `Load the "${skill.name}" skill${trigger ? ` — ${trigger}` : ""}.${readFallback(skill.path)}`;
 }
 
 /**
@@ -905,7 +952,15 @@ function apply(extensionDir, overrides = {}) {
     const id = idByName.get(name);
     const tool = id ? toolById.get(id) : null;
     if (!tool) continue;
-    const plain = `Load the "${name}" skill.`;
+    // Both shapes keep the read fallback: the budget decides whether the
+    // trigger words are affordable, and it must never decide whether the model
+    // has a way to reach the file at all.
+    const plain = standingDescription(
+      variant,
+      name,
+      tool.toolReferenceName,
+      paths[id].path,
+    );
     const rich = hotDescription(paths[id]);
     const extra = rich.length - plain.length;
     const afford = extra > 0 && triggerBudget >= extra;
@@ -925,7 +980,10 @@ function apply(extensionDir, overrides = {}) {
   // The loader is emitted only when there is something to load, so a scan that
   // finds nothing still leaves the manifest empty — which is how the extension
   // tells the user to scan in the first place.
-  const loader = loaderEntry(index, { total: Object.keys(paths).length });
+  const loader = loaderEntry(index, {
+    total: Object.keys(paths).length,
+    folders: folders.map(expandHome),
+  });
   const emitted = !Object.keys(paths).length
     ? []
     : surface === "tools"
@@ -1074,6 +1132,7 @@ module.exports = {
   usageCounts,
   hotSet,
   hotDescription,
+  readFallback,
   readUserSettings,
   scanSkills,
   buildEntries,

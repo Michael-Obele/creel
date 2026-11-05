@@ -33,6 +33,27 @@ So the surface is now:
 On a 141-skill machine: 3,599 tokens with no `#`, 4,120 with the top 15, 5,220
 with a `#` for every skill.
 
+### Reading the skill when the call does not land
+
+A `#` reference asks the model to call a tool. It does not force the call, and
+when the call errors there was nothing left to try: an audit read on 2026-11-05
+recorded 7 skills attached with `#`, 2 loaded, 2 that errored on a lookup and
+were never retried, and 3 that no tool read at all.
+
+Every skill is also a file with an absolute path, and reading a file always
+works. So each `#` tool's description now names its own `SKILL.md` and says what
+to do if the call fails:
+
+```
+Load the "caveman" skill. If this call fails, read
+/home/you/.claude/skills/caveman/SKILL.md and follow it.
+```
+
+The call still comes first — this is a fallback, not a replacement. The loader
+carries the same sentence once, with the scanned roots instead of a path per
+skill, so a skill with no `#` tool is covered too. `creel.wrapperVariant:
+baseline` is left byte for byte, because it exists to be measured against.
+
 ### Settings
 
 - `creel.toolSurface` — `loader` (default) or `tools` for the old shape.
