@@ -142,7 +142,7 @@ make sense read together.
 | `creel.preset` | What you get | Tokens |
 | --- | --- | --- |
 | `balanced` | The top 20 skills by usage get `#`; the loader carries trigger text | ~4.1k |
-| `all` | The most-used 20 skills get `#` (the cap — see below); the rest stay in the loader index | ~4.4k |
+| `all` | Every skill gets `#`, and the loader still lists them all by name as a fallback | ~13k at 144 skills |
 | `loader` | No `#` at all; every skill is reached by name through `creel_loadSkill` | ~3.6k |
 | `custom` (default) | Whatever `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` say | varies |
 
@@ -150,16 +150,17 @@ A preset **replaces** those three settings rather than merging with them, so
 `all` cannot end up half-applied, and a pinned list cannot leak into `balanced`.
 Set `creel.preset` to `custom` to take control of the individual values.
 
-`all` is the setting behind `"creel.hotSkills": ["*"]` plus
-`"creel.indexBudget": 0` — the pair you would otherwise have to write out
-yourself. Those two lines still work on their own with `preset` left at `custom`.
+`all` is the setting behind `"creel.hotSkills": ["*"]`, which does the same thing
+on its own with `preset` left at `custom`. The index budget stays out of it: with
+every skill hot there is nothing left for the index to describe, so it degrades
+to names only — which is exactly the fallback worth keeping.
 
-`all` no longer means every skill, because every skill does not work: past
-roughly 30 tools in one request the client stops making creel's tools available,
-so a `#` outside that slice is offered by the picker and dies on call. The scan
-keeps the most-used 20 and the loader carries the rest by name. It is therefore
-`balanced` with "ask for everything" spelled out: `["*"]` is trimmed by usage
-rather than by name.
+`all` means every skill, and there is no count above which creel starts hiding
+skills you asked for. The client does trim a request's tool list — it keeps 128
+entries and expands the ones a `#` pointed at — so a surface this large will sit
+past that point, and the two ways to stay under it are `balanced` and `loader`.
+The scan prints the overrun, and the loader keeps every skill reachable by name
+either way.
 
 `loader` is the default surface because the per-skill tools bought almost
 nothing: 141 of them cost 18,441 bytes of schema and every one of their
@@ -193,11 +194,13 @@ for first. A skill you have never used is never hot on its own — that is the
 point, not an oversight.
 
 **Every skill is reachable whether or not it is hot.** The hot set decides which
-ones get a `#` chip; the loader index lists all of them by name. `#` for all 141 is
-one preset away (`creel.preset: "all"`) and costs about 5.2k tokens without
-triggers — but it puts 141 tools back into a request that also carries ~91 MCP
-tools and ~43 built-ins, and that count is what makes the client withhold tools.
-Cover the library with `#` with an eye on that total.
+ones get a `#` chip; the loader index lists all of them by name. `#` for all 144 is
+one preset away (`creel.preset: "all"`) and costs about 13k tokens — it puts 144
+tools into a request that also carries your MCP servers and built-ins, and the
+client trims a tool list to 128 entries by least-recently-used order. A `#` you
+referenced is expanded before that trim, but a surface this large is past the
+point where creel can promise every one of them arrives. The loader is the
+fallback that always does.
 
 Only the newest ~64 MB of chat history is read (about a second), because the
 ranking does not need an archive: on this machine that is 375 files and 279 MB,
@@ -237,7 +240,7 @@ the five largest payloads, and anything it could not attribute. Set
 | ----------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `creel.preset`          | `custom`                                                    | One dropdown for the whole surface: `balanced`, `all`, `loader`, or `custom`. Replaces the three settings below. See [Pick a preset](#pick-a-preset-dont-wire-the-settings-by-hand).                                            |
 | `creel.toolSurface`     | `loader`                                                    | `loader` = one tool for the whole library plus a `#` tool per hot skill. `tools` = one tool per skill. See [Tool surface](#tool-surface).                                                                     |
-| `creel.hotCount`        | `20`                                                        | How many skills get a `#` reference of their own, chosen by how often you use them. `0` means no `#`. Overridden by `creel.hotSkills`.                                                                       |
+| `creel.hotCount`        | `20`                                                        | How many skills get a `#` reference of their own, chosen by how often you use them. `0` means no `#`. There is no upper cap — set it to your skill count for a `#` on everything. Overridden by `creel.hotSkills`. |
 | `creel.hotSkills`       | `[]`                                                        | Pin exactly which skills get a `#` reference (`["*"]` = all). Empty lets usage decide.                                                                                                                      |
 | `creel.indexBudget`     | `12000`                                                     | Characters both the loader index and the hot `#` tools may spend on trigger phrases, together. Names are always complete.                                                                                   |
 | `creel.referencePrefix` | `skill-`                                                    | Prefix on every `#` name. This keeps a skill apart from an MCP server that shares its name, such as the `sepia` skill and the `sepia` MCP server, or `playwright`, or `exa`. Set it to `""` for bare names. |
@@ -261,6 +264,7 @@ A message that has no tool call recorded yet is not reported as a miss. Creel re
 
 - A reference makes the model **call** the tool. It is not a silent paste of the file.
 - Referenceable tools are enabled by default in the agent panel, so in `tools` mode they do appear in the model's tool list and do cost tokens on every request. The README used to claim otherwise; measurement says 141 tools ≈ 5.9k tokens. `loader` mode exists because that bill bought almost no information.
+- The client trims a request's tool list to 128 entries, least-recently-used first, and expands the ones a `#` pointed at. Creel does not cap the `#` surface to stay under that number: the picker has no limit of its own, so a cap would only hide skills you asked for. The scan reports the overrun and names the presets that avoid it.
 - The local `<skills>` roster is capped by VS Code at 15,000 characters of descriptions, and the names past that cap cannot be resolved by the built-in `skill` tool. On a machine with ~140 skills that is roughly the first 38 names. Creel's loader index is the only complete list.
 - Personal skills only. The manifest is static, so it cannot vary per workspace, and that leaves `.github/skills` out.
 - Everything you attach lands in context. Ten skills means ten skill bodies, so two to five is a sane range.

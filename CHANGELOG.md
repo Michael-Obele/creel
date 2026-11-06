@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.7.1
+
+### `all` means all, and the scan reads your settings again
+
+`"creel.preset": "all"` was not doing what it said. A hard `MAX_HOT_TOOLS = 20`
+sliced the hot set after it had been resolved, so asking for every skill still
+produced twenty `#` references — silently, with no message anywhere. The picker
+had no such limit: it lists every tool that declares `canBeReferencedInPrompt`
+alongside a `userDescription`, so the twenty was creel hiding skills you had
+asked for.
+
+The slice is gone. `all`, `hotSkills: ["*"]` and any `hotCount` now mean what
+they say, and `creel.hotCount` no longer carries a `maximum: 100`.
+
+What replaces it is a report, not a limit. Copilot builds a tool tree per
+request and trims it to 128 entries by least-recently-used order, expanding the
+ones a `#` pointed at. Creel cannot see the MCP servers and built-ins sharing
+that budget, so the scan prints the overrun and names the presets that avoid it,
+rather than quietly dropping the skills at the bottom of the list. On a
+144-skill machine `all` is 143 `#` tools, 47,013 bytes ≈ 13,059 tokens per
+request and 16 tools past the ceiling; `balanced` stays near 4.1k.
+
+The loader lists every skill by name in that case too. With every skill hot,
+nothing was left over for the index to describe, which emptied the one route
+that survives the client withholding tools — the opposite of the fallback it
+exists to be.
+
+### The scan was reading none of your settings
+
+`readUserSettings()` stripped JSONC down to JSON with three global regexes, and
+the block-comment one was not string-aware. A glob value such as `"tomoshi/*"`
+contains `/*`, so it began a comment that ran to the next `*/` thousands of
+lines below: on one machine that deleted 26,783 characters, `JSON.parse` threw,
+and the function returned `{}`. Every `creel.*` setting was ignored by a scan
+run from a terminal, while the same scan from the Command Palette read them
+correctly through `vscode.workspace.getConfiguration`.
+
+It is a character-by-character strip now, with string state, and it drops
+trailing commas in the same pass. A file that still fails to parse is reported
+rather than quietly treated as empty.
+
 ## 0.7.0
 
 <!-- Describe this release before publishing. -->

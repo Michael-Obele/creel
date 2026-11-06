@@ -421,21 +421,17 @@ const LOADER_INDEX_BUDGET = 12000;
 const INDEX_TRIGGER_MAX = 90;
 
 /**
- * The most `#` tools creel will emit, whatever the preset says.
+ * The point where the client stops offering every tool to the model.
  *
- * `hotSkills: ["*"]` — what preset `all` expands to — names every skill, and
- * 142 tools is how the request got past the ceiling where the client stops
- * making creel's tools available at all. Measured on 2026-10-28: ~28 of them
- * reached the model, and every call past that slice came back `success:false`
- * with no execution behind it (the audit's "called but never ran" rows). A `#`
- * beyond the slice is worse than no `#`: the picker offers it, the call dies.
- *
- * So the surface degrades by usage instead of by name. Everything cut here is
- * still reachable through the loader, which is the one tool that always
- * survives. 20 is `creel.hotCount`'s own default, so this adds no new number.
- * ponytail: fixed ceiling, raise it if the client's limit moves.
+ * Copilot builds a tool tree per request and trims it to 128 entries (96 after
+ * an invalidation) by least-recently-used order; tools the user references with
+ * `#` are expanded before that trim. Creel does not enforce this number — a
+ * `#` that the client withholds is still reachable through the loader, and a
+ * `#` the user asked for is never worth silently dropping. The scan reports it
+ * so the trade-off is visible instead.
+ * ponytail: report only, never a slice.
  */
-const MAX_HOT_TOOLS = 20;
+const TOOL_CEILING = 128;
 
 /**
  * The loader's index: one line per skill, the richest shape that fits.
@@ -797,11 +793,11 @@ function hotSet(paths, options = {}) {
  * The three combinations worth naming, so the common choices are one dropdown
  * instead of two settings that only make sense together.
  *
- * `all` is the one that needs explaining: every skill asks for a `#` tool, the
- * most-used `MAX_HOT_TOOLS` get one, and the rest fall into the index — which
- * keeps its budget, because those skills no longer have a tool name to serve as
- * their index. It used to zero the budget on the theory that the tool names
- * *were* the index, true only while every skill had a tool.
+ * `all` is the one that needs explaining: every skill gets a `#` tool, so the
+ * index has nothing left to describe — and it still lists every skill by name
+ * anyway, because it is the one route that survives the client trimming tools
+ * out of a request. It used to zero the budget on the theory that the tool
+ * names *were* the index, true only while every skill had a tool.
  *
  * `custom` is the default and means "use `creel.hotSkills`, `creel.hotCount` and
  * `creel.indexBudget` exactly as written".
@@ -874,7 +870,7 @@ function hotDescription(skill) {
  *   `require("vscode")` throws outside the host and a CLI scan would otherwise
  *   silently ignore every `creel.*` setting and produce a different manifest
  *   from the same install
- * @returns {{count: number, skipped: string[], surface: string, cost: object, index: object, hot: object}}
+ * @returns {{count: number, skipped: string[], surface: string, cost: object, ceiling: object, index: object, hot: object}}
  */
 function apply(extensionDir, overrides = {}) {
   const manifestPath = path.join(extensionDir, "package.json");
@@ -943,9 +939,7 @@ function apply(extensionDir, overrides = {}) {
   // the ones most likely to be picked unprompted, then whatever is left goes to
   // the index. Without this the hot set could spend past `indexBudget` and the
   // number the setting advertises would stop being the number paid.
-  // `hotSkills: ["*"]` (preset `all`) can name every skill. Only the most-used
-  // MAX_HOT_TOOLS get a tool of their own; the cap is why they exist at all.
-  const hotNames = hot.names.slice(0, MAX_HOT_TOOLS);
+  const hotNames = hot.names;
   let triggerBudget = budget;
   const hotTools = [];
   for (const name of hotNames) {
@@ -975,7 +969,14 @@ function apply(extensionDir, overrides = {}) {
   const rest = Object.values(paths).filter(
     (skill) => !hotNames.includes(skill.name),
   );
-  const index = buildIndex(rest, Math.max(0, triggerBudget));
+  // A hot set may now cover the whole library, which would leave the index
+  // empty — and the index is the one route that survives the client trimming
+  // tools out of a request. When nothing is left over, fall back to names only
+  // for every skill: cheap, and it keeps the promise that no skill is ever
+  // unreachable.
+  const index = rest.length
+    ? buildIndex(rest, Math.max(0, triggerBudget))
+    : buildIndex(Object.values(paths), 0);
 
   // The loader is emitted only when there is something to load, so a scan that
   // finds nothing still leaves the manifest empty — which is how the extension
@@ -999,6 +1000,10 @@ function apply(extensionDir, overrides = {}) {
     surface,
     preset,
     cost: surfaceCost(emitted),
+    ceiling: {
+      limit: TOOL_CEILING,
+      over: Math.max(0, emitted.length - TOOL_CEILING),
+    },
     index,
     hot: {
       names: hotNames,
@@ -1057,6 +1062,65 @@ function readConfiguredPreset() {
 }
 
 /**
+ * Strip JSONC down to JSON without touching a string that looks like a comment.
+ *
+ * A glob is the case that bites: `"tomoshi/*"` contains `/*`, so a regex that
+ * strips block comments eats from there to the next `*\/` somewhere far below and
+ * leaves unparseable JSON. When that happens the CLI scan silently reads no
+ * settings at all and quietly produces a different manifest from the same
+ * install's palette scan. So the scan is character by character, and inside a
+ * string nothing is a comment.
+ *
+ * Trailing commas are dropped in the same pass, by looking past the whitespace
+ * after a `,` for a closer.
+ *
+ * @param {string} text the raw `settings.json`
+ * @returns {string} something `JSON.parse` can read
+ */
+function stripJsonc(text) {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      out += ch;
+      if (ch === "\\") {
+        out += text[i + 1] ?? "";
+        i += 1;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      out += ch;
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "/") {
+      while (i < text.length && text[i] !== "\n") i += 1;
+      out += "\n";
+      continue;
+    }
+    if (ch === "/" && text[i + 1] === "*") {
+      i += 2;
+      while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) {
+        i += 1;
+      }
+      i += 1; // step past the closing slash
+      continue;
+    }
+    if (ch === ",") {
+      let ahead = i + 1;
+      while (ahead < text.length && /\s/.test(text[ahead])) ahead += 1;
+      if (text[ahead] === "}" || text[ahead] === "]") continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+/**
  * The `creel.*` settings as written on disk, for a scan run outside the host.
  *
  * A CLI scan and the **Creel: Scan skills** command must produce the same
@@ -1075,14 +1139,17 @@ function readUserSettings() {
   } catch {
     return {};
   }
-  const jsonc = raw
-    .replace(/^\s*\/\/.*$/gm, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/,(\s*[}\]])/g, "$1");
+  const jsonc = stripJsonc(raw);
   let parsed;
   try {
     parsed = JSON.parse(jsonc);
-  } catch {
+  } catch (error) {
+    // Silently falling back to defaults is how a scan the user asked for ends up
+    // doing something else. Say so, once, and carry on with the defaults.
+    console.error(
+      `Creel: could not read ${file} (${error.message}). ` +
+        "Every creel.* setting is being ignored for this scan.",
+    );
     return {};
   }
 
@@ -1124,9 +1191,10 @@ module.exports = {
   LOADER_NAME,
   LOADER_INDEX_BUDGET,
   INDEX_TRIGGER_MAX,
-  MAX_HOT_TOOLS,
+  TOOL_CEILING,
   PRESETS,
   applyPreset,
+  stripJsonc,
   transcriptRoot,
   transcriptFiles,
   usageCounts,
@@ -1174,7 +1242,7 @@ if (require.main === module) {
     process.exit(1);
   }
 
-  const { count, skipped, surface, preset, cost, index, hot } = apply(
+  const { count, skipped, surface, preset, cost, ceiling, index, hot } = apply(
     __dirname,
     readUserSettings(),
   );
@@ -1201,6 +1269,16 @@ if (require.main === module) {
     `Creel: tool surface = ${cost.tools} tool(s), ${cost.bytes} bytes ≈ ` +
       `${cost.tokens} tokens per request.`,
   );
+  // The ceiling counts creel's tools against the whole request, and creel only
+  // knows its own share. Say so, and always name the escape hatch.
+  if (ceiling.over > 0) {
+    console.log(
+      `Creel: ${ceiling.over} tool(s) past the ${ceiling.limit}-tool point where ` +
+        `the client starts withholding tools from the model. Every skill stays ` +
+        `reachable by name through ${LOADER_NAME}; use preset "balanced" or ` +
+        `"loader" to stay under it.`,
+    );
+  }
   if (surface === "tools") {
     console.log("Creel: legacy surface — every skill has its own tool.");
   }

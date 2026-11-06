@@ -157,7 +157,7 @@
             "tools"
           ],
           "default": "loader",
-          "markdownDescription": "What **Creel: Scan skills** writes into the tool list. `loader` ships one tool whose description carries every skill as `- name — when to use it`; it costs about 3.6k tokens per request (against 5.9k for the legacy surface) and nothing can be truncated out of it. `tools` restores the legacy one-tool-per-skill surface, which is the only shape that supports `#skill-name` attachments — it costs about 5.9k tokens per request and, at 141 skills, pushes the request past the client's tool ceiling, where the overflow stops being available to the model. Takes effect at the next **Creel: Scan skills**, then a reload."
+          "markdownDescription": "What **Creel: Scan skills** writes into the tool list. `loader` ships one tool whose description carries every skill as `- name — when to use it`; it costs about 3.6k tokens per request (against 5.9k for the legacy surface) and nothing can be truncated out of it. `tools` restores the legacy one-tool-per-skill surface, which is the only shape that supports `#skill-name` attachments — it costs about 5.9k tokens per request and, at 141 skills, pushes the request past the client's tool ceiling, where the overflow stops being available to the model. `loader` also carries `#` tools: one per skill in `creel.hotSkills`/`creel.hotCount`, which is the cheaper way to get a `#`. Takes effect at the next **Creel: Scan skills**, then a reload."
         },
         "creel.indexBudget": {
           "type": "number",
@@ -177,7 +177,7 @@
           "enumDescriptions": [
             "Use `creel.hotSkills`, `creel.hotCount` and `creel.indexBudget` exactly as written.",
             "The top 20 skills by how often you use them get a `#` reference, and the loader index carries trigger text. About 4.1k tokens per request.",
-            "Every skill gets a `#` reference and the index spends nothing, because the tool names are the index. About 5.2k tokens per request, and 141 tool slots.",
+            "Every skill gets a `#` reference, and the loader still lists them all by name as a fallback. Costs one tool slot and its picker row per skill, so the request will sit past the client's ~128-tool ceiling; every skill stays reachable through `creel_loadSkill`.",
             "No `#` references at all; every skill is reached through `creel_loadSkill`. About 3.6k tokens per request."
           ],
           "default": "custom",
@@ -187,8 +187,7 @@
           "type": "number",
           "default": 20,
           "minimum": 0,
-          "maximum": 100,
-          "markdownDescription": "How many skills get a `#` reference of their own. A `#` reference can only resolve to a tool, so each one costs a tool slot — and a request that carries past ~128 tools has some of them withheld from the model. Rather than one tool per skill, the top N **by how often you actually attach them** are chosen from your Copilot chat history, and everything else stays reachable through `creel_loadSkill`. `0` means no `#` at all. Ignored when `creel.hotSkills` is set. Applies at the next **Creel: Scan skills**, then a reload."
+          "markdownDescription": "How many skills get a `#` reference of their own. A `#` reference can only resolve to a tool, so each one costs a tool slot — and a request that carries past ~128 tools has some of them withheld from the model. Rather than one tool per skill, the top N **by how often you actually attach them** are chosen from your Copilot chat history, and everything else stays reachable through `creel_loadSkill`. There is no upper cap: set it to your skill count for a `#` on everything. `0` means no `#` at all. Ignored when `creel.hotSkills` is set. Applies at the next **Creel: Scan skills**, then a reload."
         },
         "creel.hotSkills": {
           "type": "array",
