@@ -22,6 +22,7 @@
  */
 import { execSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -453,13 +454,25 @@ function cmdRelease(spec) {
   console.log("Pushed the commit and tag to origin.");
 
   const notes = changelogSection(nextVersion);
-  const create = notes
+  // Notes travel through a file, never a shell word. JSON.stringify quotes but
+  // does not escape backticks, and a shell turns `x` into a command
+  // substitution — so a changelog written in this project's own house style
+  // (`all`, `creel_loadSkill`, `hotSkills: ["*"]`) turned the gh invocation
+  // into a syntax error and cost 0.7.1 its release notes. A file has no shell
+  // in front of it at all.
+  const notesDir = notes
+    ? fs.mkdtempSync(path.join(os.tmpdir(), "creel-notes-"))
+    : null;
+  const notesFile = notesDir ? path.join(notesDir, "notes.md") : null;
+  if (notesFile) fs.writeFileSync(notesFile, `${notes}\n`);
+  const create = notesFile
     ? tryRun(
-        `gh release create v${nextVersion} --title "v${nextVersion}" --notes ${JSON.stringify(notes)}`,
+        `gh release create v${nextVersion} --title "v${nextVersion}" --notes-file "${notesFile}"`,
       )
     : tryRun(
         `gh release create v${nextVersion} --title "v${nextVersion}" --generate-notes`,
       );
+  if (notesDir) fs.rmSync(notesDir, { recursive: true, force: true });
   if (!create.ok) {
     console.error("\nGitHub release failed (the tag is already up):\n");
     console.error(
